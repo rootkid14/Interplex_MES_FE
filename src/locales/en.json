@@ -1,0 +1,57 @@
+{
+  "app": {
+    "title": "Interplex MES Workstation",
+    "version": "V1.0.2 Stable",
+    "confirmLogout": "Are you sure you want to log out?"
+  },
+  "login": {
+    "title": "MES LOGIN",
+    "username": "Username",
+    "password": "Password",
+    "placeholderUser": "Enter Username",
+    "placeholderPass": "Enter Password",
+    "signIn": "SIGN IN",
+    "footer": "System v2.0 • Authorized Personnel Only"
+  },
+  "sidebar": {
+    "online": "ONLINE",
+    "notifications": "Notifications",
+    "settings": "Settings",
+    "logout": "Sign Out",
+    "unknownUser": "Unknown User",
+    "operator": "Operator"
+  },
+  "navbar": {
+    "overview": "Overview",
+    "production": "Production",
+    "traceability": "Traceability"
+  },
+  "dashboard": {
+    "totalJobs": "Total Jobs",
+    "efficiency": "Efficiency",
+    "defects": "Defects",
+    "pending": "Pending"
+  },
+  "production": {
+  "modeJob": "JOB MODE",
+  "modeTracking": "TRACKING MODE",
+  "search": "Search:",
+  "jobNo": "Job No Field",
+  "date": "Datetime",
+  "status": "Status",
+  "batch": "Batch ID",
+  "markDone": "Mark Done",
+  "ngReport": "NG REPORT",
+  "matRequest": "MAT REQUEST",
+  "scan": "Scan",
+  "runtimePlaceholder": "This WO Status, TBC",
+  "skipBox": "SKIP BOX"
+  },
+  "traceability": {
+    "loading": "Traceability Module Loading..."
+  },
+  "workstationFrame":{
+    "materialID": "Input Material ID",
+    "addmaterial": "Add Material"
+  }
+}

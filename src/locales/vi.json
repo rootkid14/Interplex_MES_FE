@@ -1,0 +1,57 @@
+{
+  "app": {
+    "title": "Trạm Làm Việc Interplex MES",
+    "version": "V1.0.2 Ổn định",
+    "confirmLogout": "Bạn có chắc chắn muốn đăng xuất không?"
+  },
+  "login": {
+    "title": "ĐĂNG NHẬP MES",
+    "username": "Tên đăng nhập",
+    "password": "Mật khẩu",
+    "placeholderUser": "Nhập tên đăng nhập",
+    "placeholderPass": "Nhập mật khẩu",
+    "signIn": "ĐĂNG NHẬP",
+    "footer": "Hệ thống v2.0 • Chỉ dành cho nhân viên"
+  },
+  "sidebar": {
+    "online": "TRỰC TUYẾN",
+    "notifications": "Thông báo",
+    "settings": "Cài đặt",
+    "logout": "Đăng xuất",
+    "unknownUser": "Người dùng",
+    "operator": "Vận hành viên"
+  },
+  "navbar": {
+    "overview": "Tổng quan",
+    "production": "Sản xuất",
+    "traceability": "Truy xuất"
+  },
+  "dashboard": {
+    "totalJobs": "Tổng lệnh",
+    "efficiency": "Hiệu suất",
+    "defects": "Hàng lỗi",
+    "pending": "Chờ xử lý"
+  },
+  "production": {
+  "modeJob": "VẬN HÀNH JOB",
+  "modeTracking": "TRA CỨU JOB",
+  "search": "Tìm kiếm:",
+  "jobNo": "Mã Lệnh",
+  "date": "Ngày tháng",
+  "status": "Trạng thái",
+  "batch": "Mã Batch",
+  "markDone": "HOÀN THÀNH",
+  "ngReport": "BÁO CÁO NG",
+  "matRequest": "VẬT TƯ",
+  "scan": "Quét",
+  "runtimePlaceholder": "KHÔNG GIAN LÀM VIỆC CHÍNH, ĐANG CẬP NHẬT",
+  "skipBox": "ĐÓNG THÙNG THIẾU"
+},
+  "traceability": {
+    "loading": "Đang tải module truy xuất..."
+  },
+  "workstationFrame":{
+    "materialID": "Mã vật liệu đầu vào",
+    "addmaterial": "QUÉT LIỆU"
+  }
+}

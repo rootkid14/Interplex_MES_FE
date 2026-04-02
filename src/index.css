@@ -1,0 +1,39 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+#html5-qrcode-select-camera {
+  background-color: #1e293b !important; /* Màu nền tối (Slate-800) */
+  color: white !important;               /* Chữ màu trắng */
+  border: 1px solid #475569 !important;  /* Viền xám */
+  padding: 8px;
+  border-radius: 6px;
+  margin-bottom: 10px;
+  width: 100%;
+}
+
+/* 2. Sửa các nút bấm (Start/Stop scanning) */
+#reader button {
+  background-color: #2563eb !important; /* Màu xanh (Blue-600) */
+  color: white !important;
+  border: none !important;
+  padding: 8px 16px !important;
+  border-radius: 6px !important;
+  font-weight: bold;
+  cursor: pointer;
+  margin-top: 10px;
+}
+
+#reader button:hover {
+  background-color: #1d4ed8 !important; /* Hover xanh đậm */
+}
+
+/* 3. Ẩn dòng chữ quảng cáo của thư viện */
+#reader a {
+  display: none !important;
+}
+
+/* 4. Sửa màu chữ thông báo trạng thái */
+#reader span, #reader div {
+  color: #334155 !important; /* Màu chữ xám đậm cho dễ đọc trên nền trắng */
+}
