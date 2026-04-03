@@ -1,15 +1,18 @@
 import React from 'react';
-import useProductionStore from '../../store/productionStore';
+import useAuthStore from '../../store/AuthStore';
 import { useTranslation } from 'react-i18next';
 import { LogOut, User, Bell, Settings, ChevronLeft, ChevronRight, Factory } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 const Sidebar = ({ isSidebarOpen, setIsSidebarOpen }) => {
-  const { user, logout } = useProductionStore();
+  const { user, logout } = useAuthStore();
   const { t } = useTranslation();
+  const navigate = useNavigate();
 
   const handleLogout = () => {
     if (window.confirm(t('app.confirmLogout'))) {
       logout();
+      navigate("/login")
     }
   };
 
@@ -50,9 +53,14 @@ const Sidebar = ({ isSidebarOpen, setIsSidebarOpen }) => {
                 {user?.name || t('sidebar.unknownUser')}
               </h3>
               <p className="text-blue-400 text-xs uppercase tracking-wider font-bold mt-1">
+                  {user?.id || t('sidebar.operator')}
+              </p>
+              <p className="text-blue-400 text-xs uppercase tracking-wider font-bold mt-1">
                   {user?.role || t('sidebar.operator')}
               </p>
-              
+              <p className="text-blue-400 text-xs uppercase tracking-wider font-bold mt-1">
+                  {user?.dept || t('sidebar.operator')}
+              </p>
               <div className="mt-4 flex justify-center">
                  <span className="px-3 py-1 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1.5">
                     <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> 
@@ -65,7 +73,11 @@ const Sidebar = ({ isSidebarOpen, setIsSidebarOpen }) => {
           {/* Navigation Items */}
           <nav className="flex-1 py-6 px-4 space-y-2 overflow-y-auto">
              <SidebarItem icon={<Bell size={20} />} label={t('sidebar.notifications')} badge={3} />
-             <SidebarItem icon={<Settings size={20} />} label={t('sidebar.settings')} />
+             <SidebarItem 
+               icon={<Settings size={20} />} 
+               label={t('sidebar.settings')} 
+               onClick={() => navigate('/model-config')} 
+             />
           </nav>
 
           {/* Footer */}
@@ -95,9 +107,15 @@ const Sidebar = ({ isSidebarOpen, setIsSidebarOpen }) => {
   );
 };
 
-const SidebarItem = ({ icon, label, badge }) => (
-  <div className="flex items-center px-4 py-3 text-slate-400 hover:bg-slate-700/80 hover:text-white rounded-xl cursor-pointer transition-all duration-200 group relative overflow-hidden">
-    <div className="group-hover:text-blue-400 transition-colors">{icon}</div>
+const SidebarItem = ({ icon, label, badge, onClick }) => (
+  <div 
+    onClick={onClick}
+    className="flex items-center px-4 py-3 text-slate-400 hover:bg-slate-700/80 hover:text-white rounded-xl cursor-pointer transition-all duration-200 group relative overflow-hidden active:scale-95"
+  >
+    <div className="group-hover:text-blue-400 transition-colors">
+      {icon}
+    </div>
+    
     <div className="ml-3 flex-1 flex justify-between items-center">
       <span className="font-medium text-sm tracking-wide">{label}</span>
       {badge && (

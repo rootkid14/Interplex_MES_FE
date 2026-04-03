@@ -28,9 +28,16 @@
   },
   "dashboard": {
     "totalJobs": "Total Jobs",
-    "efficiency": "Efficiency",
+    "matreq": "Materials Request",
     "defects": "Defects",
-    "pending": "Pending"
+    "pending": "Warning",
+    "wo": "Work Order",
+    "modelNO": "Model Number",
+    "WCTR": "Work Center",
+    "progress": "Progress",
+    "processed": "Processed",
+    "okqty": "QTY OK",
+    "ngqty": "QTY NG"
   },
   "production": {
   "modeJob": "JOB MODE",
@@ -45,7 +52,9 @@
   "matRequest": "MAT REQUEST",
   "scan": "Scan",
   "runtimePlaceholder": "This WO Status, TBC",
-  "skipBox": "SKIP BOX"
+  "skipBox": "SKIP BOX",
+  "addBox": "NEW BOX",
+  "addBoxText": "Add a new Box"
   },
   "traceability": {
     "loading": "Traceability Module Loading..."

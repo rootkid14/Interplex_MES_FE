@@ -16,7 +16,7 @@ const FrameMachininngProc = () => {
                     <div className="flex items-center gap-3">
                         <MonitorDot className="text-blue-400" size={24} />
                         <div>
-                            <h1 className="text-slate-200 font-bold text-lg tracking-wide">Assembly Process</h1>
+                            <h1 className="text-slate-200 font-bold text-lg tracking-wide">Machining Process</h1>
                             <p className="text-slate-500 text-sm">Station: WCTR-AND3544</p>
                         </div>
                     </div>

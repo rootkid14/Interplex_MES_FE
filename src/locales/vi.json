@@ -27,10 +27,17 @@
     "traceability": "Truy xuất"
   },
   "dashboard": {
-    "totalJobs": "Tổng lệnh",
-    "efficiency": "Hiệu suất",
+    "totalJobs": "Số đơn đang chạy",
+    "matreq": "Yêu cầu vật liệu",
     "defects": "Hàng lỗi",
-    "pending": "Chờ xử lý"
+    "pending": "Cảnh báo hệ thống",
+    "wo": "Mã Công Đơn: ",
+    "modelNO": "Mã Hàng",
+    "WCTR": "Work Center",
+    "progress": "Tiến trình",
+    "processed": "Đã xử lý",
+    "okqty": "Số lượng OK",
+    "ngqty": "Số lượng NG"
   },
   "production": {
   "modeJob": "VẬN HÀNH JOB",
@@ -45,7 +52,9 @@
   "matRequest": "VẬT TƯ",
   "scan": "Quét",
   "runtimePlaceholder": "KHÔNG GIAN LÀM VIỆC CHÍNH, ĐANG CẬP NHẬT",
-  "skipBox": "ĐÓNG THÙNG THIẾU"
+  "skipBox": "ĐÓNG THÙNG THIẾU",
+  "addBox": "THÙNG MỚI",
+  "addBoxText": "Thêm một thùng hàng mới"
 },
   "traceability": {
     "loading": "Đang tải module truy xuất..."

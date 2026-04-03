@@ -15,10 +15,8 @@ const ActiveJobView = () => {
 
   // Handle successful scan
   const handleScanResult = (decodedText) => {
-    setJobId(decodedText); // Fill the input
-    setShowScanner(false); // Close the camera
-    // Optional: Auto-submit or trigger search here
-    // alert(`Scanned: ${decodedText}`); 
+    setJobId(decodedText); 
+    setShowScanner(false); 
   };
 
   return (
@@ -60,39 +58,16 @@ const ActiveJobView = () => {
        
       </div>
 
-      {/* 2. RUNTIME WORKSPACE */}
-      <div className="flex-1 bg-blue-600/20 border-2 border-blue-500/30 border-dashed rounded-2xl flex items-center justify-center p-4 sm:p-8 relative overflow-hidden">
-         <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-blue-500/10 to-transparent pointer-events-none"></div>
-         
-         <div className="text-center px-4">
-            <h3 className="text-lg sm:text-2xl font-bold text-blue-200 tracking-wider mb-2">
-                {t('production.runtimePlaceholder')}
-            </h3>
-            <p className="text-blue-400/60 text-xs sm:text-sm">Components will be loaded here based on Machine State</p>
-         </div>
-      </div>
+     
 
-      {/* <FrameMachiningProc/> */}
+      <FrameMachiningProc/>
       {/* <FrameAssemblyProc/> */}
-      <FramePackingProc/>
+      {/* <FramePackingProc/> */}
       
     </div>
   );
 };
 
-const ActionButton = ({ label, color, icon, className = "" }) => {
-    const colors = {
-        blue: "bg-blue-600 hover:bg-blue-500 border-blue-400",
-        red: "bg-rose-600 hover:bg-rose-500 border-rose-400",
-        emerald: "bg-emerald-600 hover:bg-emerald-500 border-emerald-400"
-    };
 
-    return (
-        <button className={`${colors[color]} ${className} text-white px-3 py-2.5 rounded-lg border-b-4 active:border-b-0 active:translate-y-1 font-bold text-xs sm:text-sm flex justify-center items-center gap-2 transition-all shadow-lg whitespace-nowrap`}>
-            {icon}
-            {label}
-        </button>
-    )
-}
 
 export default ActiveJobView;

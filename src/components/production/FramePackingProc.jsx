@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import BarcodeScanner from '../common/BarcodeScanner'; 
-import { ScanLine, XCircle, AlertTriangle, PackagePlus, MonitorDot} from "lucide-react";
+import { ScanLine, XCircle, AlertTriangle, PackagePlus, MonitorDot, Box} from "lucide-react";
 import { useTranslation } from 'react-i18next';
 import { ActionButton } from "../common/ActionButton";
 import { BoxContentExpandable } from "../common/BoxContentExpandable";
@@ -31,7 +31,35 @@ const FramePackingProc = () => {
                 </div> 
 
                 {/* ======================================= */}
-                {/* 1. TOOLBAR / SCAN SECTION               */}
+                {/* 1. TOOLBAR / SCAN SECTION FOR NEW BOX   */}
+                {/* ======================================= */}
+                <div className="bg-slate-800 rounded-xl border border-slate-700 shadow-2xl p-4 sm:p-6 flex flex-col xl:flex-row justify-between items-start xl:items-center gap-5 xl:gap-6">
+                    
+                    {/* Left Side: Input & Scan Section */}
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full xl:flex-1 xl:max-w-xl">
+                        <span className="text-slate-400 font-semibold whitespace-nowrap hidden sm:block">
+                            Material:
+                        </span>
+                        
+                        <input 
+                            type="text" 
+                            value={MaterialID}
+                            onChange={(e) => setMaterialID(e.target.value)}
+                            placeholder={t('production.addBoxText')}
+                            className="flex-1 bg-slate-900 border border-slate-600 text-white px-4 py-3 sm:py-2.5 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all w-full placeholder-slate-500 shadow-inner"
+                        />
+                        
+                        <ActionButton 
+                            label={t('production.addBox')} 
+                            color="emerald" 
+                            icon={<Box size={18}/>} 
+                            className="w-full sm:w-auto py-3 sm:py-2.5 flex justify-center" 
+                        />
+                    </div>
+                </div>
+
+                {/* ======================================= */}
+                {/* 1. TOOLBAR / SCAN SECTION FOR PRODUCTS  */}
                 {/* ======================================= */}
                 <div className="bg-slate-800 rounded-xl border border-slate-700 shadow-2xl p-4 sm:p-6 flex flex-col xl:flex-row justify-between items-start xl:items-center gap-5 xl:gap-6">
                     
