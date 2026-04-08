@@ -1,7 +1,7 @@
 import React from 'react';
 import useAuthStore from '../../store/AuthStore';
 import { useTranslation } from 'react-i18next';
-import { LogOut, User, Bell, Settings, ChevronLeft, ChevronRight, Factory } from 'lucide-react';
+import { LogOut, User, Bell, Settings, ChevronLeft, ChevronRight, Factory, Users } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 const Sidebar = ({ isSidebarOpen, setIsSidebarOpen }) => {
@@ -72,12 +72,24 @@ const Sidebar = ({ isSidebarOpen, setIsSidebarOpen }) => {
 
           {/* Navigation Items */}
           <nav className="flex-1 py-6 px-4 space-y-2 overflow-y-auto">
-             <SidebarItem icon={<Bell size={20} />} label={t('sidebar.notifications')} badge={3} />
-             <SidebarItem 
-               icon={<Settings size={20} />} 
-               label={t('sidebar.settings')} 
-               onClick={() => navigate('/model-config')} 
-             />
+              
+              {/* Menu dành riêng cho Admin (Bọc 2 nút trong thẻ Fragment <>) */}
+              {user?.role?.toLowerCase() === 'admin' && (
+                  <>
+                      <SidebarItem 
+                          icon={<Settings size={20} />} 
+                          label={t('sidebar.settings', 'Cài đặt model')} 
+                          onClick={() => navigate('/model-config')} 
+                      />
+                      
+                      <SidebarItem 
+                          icon={<Users size={20} />} 
+                          label={t('sidebar.accounts', 'Quản lý Tài khoản')} 
+                          onClick={() => navigate('/accounts')} 
+                      />
+                  </>
+              )}
+
           </nav>
 
           {/* Footer */}

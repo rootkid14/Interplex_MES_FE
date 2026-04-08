@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Search, Filter, ListFilter, ChevronLeft, ChevronRight, Loader2, Eye, X, Package } from 'lucide-react';
-import { jobApi } from '../../api/jobApi'; 
 
 const JobTrackingView = () => {
   const { t } = useTranslation();

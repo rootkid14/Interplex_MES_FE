@@ -6,7 +6,7 @@ export const modelConfigAPI = {
    * Dùng để đổ dữ liệu vào bảng khi lần đầu load trang
    */
   getAllModels: async () => {
-    const response = await apiClient.get('/models');
+    const response = await apiClient.get('/models/');
     return response.data;
   },
 
@@ -27,7 +27,7 @@ export const modelConfigAPI = {
    * @param {Object} payload - Ví dụ: { modelNo: "NVI123", type: "Assembly" }
    */
   createModel: async (payload) => {
-    const response = await apiClient.post('/models', payload);
+    const response = await apiClient.post('/models/', payload);
     return response.data;
   },
 

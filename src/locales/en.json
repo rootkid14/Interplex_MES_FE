@@ -11,15 +11,16 @@
     "placeholderUser": "Enter Username",
     "placeholderPass": "Enter Password",
     "signIn": "SIGN IN",
-    "footer": "System v2.0 • Authorized Personnel Only"
+    "footer": "Developed by Lambda"
   },
   "sidebar": {
     "online": "ONLINE",
     "notifications": "Notifications",
-    "settings": "Settings",
+    "settings": "Config scan rule",
     "logout": "Sign Out",
     "unknownUser": "Unknown User",
-    "operator": "Operator"
+    "operator": "Operator",
+    "accounts": "Accounts Manager"
   },
   "navbar": {
     "overview": "Overview",
@@ -37,7 +38,8 @@
     "progress": "Progress",
     "processed": "Processed",
     "okqty": "QTY OK",
-    "ngqty": "QTY NG"
+    "ngqty": "QTY NG",
+    "nopendingwo": "No Pending WO"
   },
   "production": {
   "modeJob": "JOB MODE",
@@ -57,10 +59,23 @@
   "addBoxText": "Add a new Box"
   },
   "traceability": {
-    "loading": "Traceability Module Loading..."
+    "loading": "Traceability Module Loading...",
+    "Explaination": "Product tracing (Forward Trace) and defects localization (Reverse Trace).",
+    "tracebybox": "Trace by BOX",
+    "tracebyprd": "Trace by prod",
+    "EnterBoxID": "Enter Box ID",
+    "EnterProductID": "Enter Product ID with SN",
+    "Trace": "TRACE",
+    "HierachyTree": "Composing Hierachy",
+    "defectLocalization": "LOCALIZE DEFECTS",
+    "details": "DETAILS"
   },
   "workstationFrame":{
     "materialID": "Input Material ID",
-    "addmaterial": "Add Material"
+    "addmaterial": "Add Material",
+    "workstationlogin": "ENTER WORKSTATION",
+    "workstationloginprompt": "Please scan or enter the Work Order code to begin your shift.",
+    "woinputexample": "Example: 10003000"
+    
   }
 }

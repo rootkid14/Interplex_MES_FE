@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { X, CheckCircle2, AlertTriangle, Hammer, Package } from 'lucide-react';
+import { X, CheckCircle2, AlertTriangle, Hammer, Package, Loader2 } from 'lucide-react';
 import { MESSAGE_TYPE } from '../common/Constants';
 import { ActionButton } from '../common/ActionButton';
+import useProductionStore from '../../store/productionStore';
+import { dashboardAPI } from '../../api/dashboardAPI';
 
 // ==========================================
-// CẤU HÌNH MÀU SẮC ĐỘNG CHO TAILWIND (BẮT BUỘC KHAI BÁO RÕ RÀNG)
+// CẤU HÌNH MÀU SẮC ĐỘNG CHO TAILWIND
 // ==========================================
 const THEME_COLORS = {
   emerald: {
@@ -31,21 +33,37 @@ const THEME_COLORS = {
   }
 };
 
-
 // ==========================================
 // COMPONENT: THẺ TIN NHẮN (TRONG MODAL)
 // ==========================================
 const MessageCard = ({ message, typeColor }) => {
   const theme = THEME_COLORS[typeColor];
+  const [isClearing, setIsClearing] = useState(false);
 
-  // Chuyển đổi màu sắc của Modal (rose, amber) sang màu mà ActionButton của bạn hỗ trợ
   let btnColor = 'default';
   if (typeColor === 'emerald') btnColor = 'emerald';
   if (typeColor === 'rose') btnColor = 'red';
-  // amber sẽ tự rơi vào 'default' (màu slate) vì ActionButton của bạn chưa định nghĩa màu cam.
+
+  const handleClearMessage = async () => {
+    try {
+      setIsClearing(true); // Bật trạng thái loading
+      
+      const result = await dashboardAPI.clearDashboardMessage(message.ID);
+      
+      if (!result.success) {
+        alert(result.message);
+        setIsClearing(false); // Chỉ tắt loading khi lỗi, nếu thành công SSE sẽ tự xóa nguyên component này
+      }
+      // NẾU THÀNH CÔNG: Ta không cần làm gì cả! 
+      // BE xóa xong -> SSE Poller ngầm quét thấy mất dòng -> Bắn data mới về FE -> Zustand update -> React tự động Unmount cái MessageCard này đi!
+    } catch (error) {
+      alert("Lỗi kết nối máy chủ khi xóa tin nhắn!");
+      setIsClearing(false);
+    }
+  };
 
   return (
-    <div className={`bg-slate-800/80 border border-slate-700 p-4 rounded-xl flex justify-between items-center group transition-colors ${theme.cardHover}`}>
+    <div className={`bg-slate-800/80 border border-slate-700 p-4 rounded-xl flex justify-between items-center group transition-colors ${theme.cardHover} ${isClearing ? 'opacity-50 pointer-events-none' : ''}`}>
       <div>
         <div className="flex items-center gap-2 mb-1">
           <span className="text-xs font-bold bg-slate-700 text-slate-300 px-2 py-0.5 rounded">WO</span>
@@ -54,74 +72,56 @@ const MessageCard = ({ message, typeColor }) => {
         <p className="text-slate-300 text-sm">{message.Content}</p>
       </div>
       
-      {/* Đã sửa lại đúng chuẩn Props của ActionButton.jsx */}
       <ActionButton 
-        label="Clear" 
-        icon={<CheckCircle2 size={16} />} 
+        label={isClearing ? "Đang xử lý..." : "Clear"} 
+        icon={isClearing ? <Loader2 size={16} className="animate-spin"/> : <CheckCircle2 size={16} />} 
         color={btnColor}
-        onClick={() => alert(`Sẽ gọi API xóa Message ID: ${message.ID} của WO: ${message.WO}`)}
+        onClick={handleClearMessage}
       />
     </div>
   );
 };
 
 // ==========================================
-// COMPONENT CHÍNH: DASHBOARD STATS (THỰC THỂ ĐỘC LẬP)
+// COMPONENT CHÍNH: DASHBOARD STATS
 // ==========================================
-const DashboardStats = ({ totalActiveJobs = 0 }) => {
+const DashboardStats = () => {
   const { t } = useTranslation();
   
-  // 1. STATE LƯU TRỮ TIN NHẮN ĐỘC LẬP
-  const [systemMessages, setSystemMessages] = useState([]);
+  // 1. RÚT CẢ 2 NGUỒN DỮ LIỆU TỪ ZUSTAND 
+  const systemMessages = useProductionStore(state => state.systemMessages);
+  const activeJobs = useProductionStore(state => state.activeJobs);
   
-  // State quản lý Modal
+  // Tính tổng số Jobs trực tiếp tại đây
+  const totalActiveJobs = activeJobs.length;
+
   const [modalConfig, setModalConfig] = useState({ 
     isOpen: false, 
     title: '', 
-    typeColor: 'emerald', // Giá trị mặc định an toàn
+    typeColor: 'emerald',
     data: [] 
   });
 
-  // 2. EFFECT: KẾT NỐI SSE ĐỘC LẬP CHO MESSAGE
+  // 2. AUTO-UPDATE DATA TRONG MODAL NẾU LUỒNG SSE CÓ THAY ĐỔI
   useEffect(() => {
-    // Thay đổi URL này cho khớp với router Backend của bạn
-    const messageStreamUrl = 'http://localhost:8000/api/v1/workorders/messages/stream'; 
-    const eventSource = new EventSource(messageStreamUrl);
-
-    eventSource.onopen = () => console.log("Bảng Stats đã kết nối với luồng Message");
-
-    eventSource.onmessage = (event) => {
-      try {
-        // Kỳ vọng Backend ném xuống thẳng 1 array JSON: [{"ID": 1, "WO": 123, "MessageType": 1, ...}]
-        const newMessages = JSON.parse(event.data);
-        setSystemMessages(newMessages);
-        
-        // Auto-update Modal nếu nó đang mở
-        setModalConfig(prev => {
-          if (!prev.isOpen) return prev;
-          // Cập nhật lại list data trong Modal theo dữ liệu mới nhất
-          const updatedData = newMessages.filter(m => m.MessageType === prev.data[0]?.MessageType);
-          // Nếu xử lý xong hết lỗi thì tự đóng modal
-          if (updatedData.length === 0) return { ...prev, isOpen: false };
-          return { ...prev, data: updatedData };
-        });
-
-      } catch (error) {
-        console.error("Lỗi khi parse dữ liệu Message:", error);
+    if (modalConfig.isOpen && modalConfig.data.length > 0) {
+      const currentMessageType = modalConfig.data[0].MessageType;
+      const updatedData = systemMessages.filter(m => m.MessageType === currentMessageType);
+      
+      // Nếu quản lý đã xử lý hết lỗi -> tự động đóng Modal
+      if (updatedData.length === 0) {
+        setModalConfig(prev => ({ ...prev, isOpen: false }));
+      } else {
+        setModalConfig(prev => ({ ...prev, data: updatedData }));
       }
-    };
+    }
+  }, [systemMessages]);
 
-    eventSource.onerror = () => console.error("Stats rớt mạng, đang kết nối lại luồng Message...");
-
-    return () => eventSource.close();
-  }, []);
-
-  // 3. BÓC TÁCH DỮ LIỆU
+  // 3. BÓC TÁCH DỮ LIỆU ĐỂ RENDER THẺ
   const matReqMsgs = systemMessages.filter(m => m.MessageType === MESSAGE_TYPE.MATERIAL_REQUEST);
   const defectMsgs = systemMessages.filter(m => m.MessageType === MESSAGE_TYPE.DEFECT);
   const warningMsgs = systemMessages.filter(m => m.MessageType === MESSAGE_TYPE.WARNING);
 
-  // Hàm mở Modal
   const handleOpenModal = (title, typeColor, data) => {
     if (data.length === 0) return; 
     setModalConfig({ isOpen: true, title, typeColor, data });
@@ -133,7 +133,7 @@ const DashboardStats = ({ totalActiveJobs = 0 }) => {
     <>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-6 animate-fade-in-up mb-6">
         
-        {/* Thẻ 1: Total Jobs (Nhận prop từ ActiveJobsTable truyền sang) */}
+        {/* Thẻ 1: Total Jobs */}
         <DashboardCard 
           title={t('dashboard.totalJobs')} 
           value={totalActiveJobs} 
@@ -176,7 +176,6 @@ const DashboardStats = ({ totalActiveJobs = 0 }) => {
           
           <div className="relative bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl animate-fade-in-up">
             
-            {/* Header Modal */}
             <div className={`p-5 border-b border-slate-700 flex justify-between items-center ${THEME_COLORS[modalConfig.typeColor].text}`}>
               <h2 className="text-xl font-black uppercase tracking-wider flex items-center gap-2">
                 {modalConfig.typeColor === 'emerald' && <Package size={24} />}
@@ -192,7 +191,6 @@ const DashboardStats = ({ totalActiveJobs = 0 }) => {
               </button>
             </div>
 
-            {/* Thân Modal */}
             <div className="p-5 overflow-y-auto flex flex-col gap-3 custom-scrollbar flex-1">
               {modalConfig.data.map((msg) => (
                 <MessageCard key={msg.ID} message={msg} typeColor={modalConfig.typeColor} />

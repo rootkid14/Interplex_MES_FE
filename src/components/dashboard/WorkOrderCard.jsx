@@ -2,11 +2,11 @@ import React from 'react';
 import { Bell, MapPin, CheckCircle, XCircle, Package, Tag } from 'lucide-react';
 import { WO_STATUS_LABEL, WO_STATUS_COLOR } from '../common/Constants'; 
 import { useTranslation } from 'react-i18next';
-
+import { Link as LinkIcon } from 'lucide-react';
 // ==========================================
 // COMPONENT: WORK ORDER CARD
 // ==========================================
-const WorkOrderCard = ({ data }) => {
+const WorkOrderCard = ({ data, aliasWO }) => {
     const { t } = useTranslation();
 
   const {
@@ -31,12 +31,23 @@ const WorkOrderCard = ({ data }) => {
       <div className="flex justify-between items-start">
         <div>
           <div className="flex items-center gap-3 mb-1.5">
-            <h3 className="text-2xl font-black text-white tracking-wider">#{WO}</h3>
+            <h3 className="text-2xl font-black text-white tracking-wider">#{WO}
+
+              {aliasWO && (
+                <div>
+                    <LinkIcon size={18} className="text-blue-400"/> 
+                    #{aliasWO}
+                </div>
+            )}
+            </h3>
+            
             
             {/* GỌI BIẾN ENUM ĐỂ RENDER MÀU VÀ CHỮ */}
             <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold border ${WO_STATUS_COLOR[Status]}`}>
               {WO_STATUS_LABEL[Status]}
             </span>
+
+
             
           </div>
           

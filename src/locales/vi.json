@@ -1,6 +1,6 @@
 {
   "app": {
-    "title": "Trạm Làm Việc Interplex MES",
+    "title": "Hệ thống MES Interplex",
     "version": "V1.0.2 Ổn định",
     "confirmLogout": "Bạn có chắc chắn muốn đăng xuất không?"
   },
@@ -11,15 +11,16 @@
     "placeholderUser": "Nhập tên đăng nhập",
     "placeholderPass": "Nhập mật khẩu",
     "signIn": "ĐĂNG NHẬP",
-    "footer": "Hệ thống v2.0 • Chỉ dành cho nhân viên"
+    "footer": "Phát triển bởi Lambda"
   },
   "sidebar": {
     "online": "TRỰC TUYẾN",
     "notifications": "Thông báo",
-    "settings": "Cài đặt",
+    "settings": "Cài đặt scan rule",
     "logout": "Đăng xuất",
     "unknownUser": "Người dùng",
-    "operator": "Vận hành viên"
+    "operator": "Vận hành",
+    "accounts": "Quản lý tài khoản"
   },
   "navbar": {
     "overview": "Tổng quan",
@@ -37,7 +38,8 @@
     "progress": "Tiến trình",
     "processed": "Đã xử lý",
     "okqty": "Số lượng OK",
-    "ngqty": "Số lượng NG"
+    "ngqty": "Số lượng NG",
+    "nopendingwo": "Không có lệnh sản xuất bị tồn đọng"
   },
   "production": {
   "modeJob": "VẬN HÀNH JOB",
@@ -57,10 +59,22 @@
   "addBoxText": "Thêm một thùng hàng mới"
 },
   "traceability": {
-    "loading": "Đang tải module truy xuất..."
+    "loading": "Đang tải module truy xuất...",
+    "Explaination": "Truy xuất cấu thành sản phẩm (Forward) và khoanh vùng sự cố (Reverse).",
+    "tracebybox": "Theo mã BOX",
+    "tracebyprd": "Theo mã sản phẩm",
+    "EnterBoxID": "Nhập mã BOX",
+    "EnterProductID": "Nhập mã Sản phẩm có SN",
+    "Trace": "Truy vết",
+    "HierachyTree": "Cây Lịch Sử Cấu Thành",
+    "defectLocalization": "KHOANH VÙNG LỖI",
+    "details": "BẢNG CHI TIẾT"
   },
   "workstationFrame":{
     "materialID": "Mã vật liệu đầu vào",
-    "addmaterial": "QUÉT LIỆU"
+    "addmaterial": "QUÉT LIỆU",
+    "workstationlogin": "TRUY CẬP WO",
+    "workstationloginprompt": "Vui lòng quét hoặc nhập mã Lệnh Sản Xuất (Work Order) để bắt đầu ca làm việc.",
+    "woinputexample": "Ví dụ: 10003000"
   }
 }

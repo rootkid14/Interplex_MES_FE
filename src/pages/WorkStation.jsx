@@ -5,7 +5,7 @@ import TopSystemBar from "../components/layout/TopSystemBar";
 import WorkStationNavbar from "../components/layout/WorkstationNavbar";
 
 import DashboardView from "../components/dashboard/DashboardView";
-import ProductionMode from "../components/production/ProductionMode";
+import ActiveJobView from "../components/production/ActiveJobView"
 import TraceabilityView from "../components/traceability/TraceabilityView";
 
 const WorkStation = () => {
@@ -38,7 +38,7 @@ const WorkStation = () => {
 
           <div className="relative z-0 max-w-7xl mx-auto">
             {activeTab === 'dashboard' && <DashboardView />}
-            {activeTab === 'production' && <ProductionMode />}
+            {activeTab === 'production' && <ActiveJobView />}
             {activeTab === 'traceability' && <TraceabilityView />}
           </div>
         </div>

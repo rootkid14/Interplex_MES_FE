@@ -17,7 +17,7 @@ const DashboardView = () => {
 
       {/* 3. TRUYỀN HÀM SETTER XUỐNG CHO BẢNG CÔNG VIỆC (TABLE) ĐỂ NÓ BÁO CÁO LÊN */}
       <div className="flex-1 min-h-[300px]">
-          <ActiveJobsTable setTotalActiveJobs={setTotalActiveJobs} />
+          <ActiveJobsTable/>
       </div>
 
     </div>
