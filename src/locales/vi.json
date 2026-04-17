@@ -20,7 +20,9 @@
     "logout": "Đăng xuất",
     "unknownUser": "Người dùng",
     "operator": "Vận hành",
-    "accounts": "Quản lý tài khoản"
+    "accounts": "Quản lý tài khoản",
+    "mainscreen": "Màn hình chính",
+    "defects": "Cấu hình lỗi"
   },
   "navbar": {
     "overview": "Tổng quan",

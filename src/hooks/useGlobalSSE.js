@@ -1,12 +1,13 @@
 // src/hooks/useGlobalSSE.js
 import { useEffect } from 'react';
 import useProductionStore from '../store/productionStore';
+import useAuthStore from '../store/AuthStore';
 const hostname = window.location.hostname;
 
 export const useGlobalSSE = () => {
   const setActiveJobs = useProductionStore(state => state.setActiveJobs);
   const setSystemMessages = useProductionStore(state => state.setSystemMessages);
-  const isAuthenticated = useProductionStore(state => state.isAuthenticated);
+  const isAuthenticated = useAuthStore(state => state.isAuthenticated);
 
   useEffect(() => {
     // Chỉ mở luồng khi đã đăng nhập

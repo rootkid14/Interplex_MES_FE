@@ -7,6 +7,8 @@ import useProductionStore from '../../store/productionStore';
 import { workstationAPI } from '../../api/workstationApi';
 import BarcodeScanner from '../common/BarcodeScanner';
 import { MESSAGE_TYPE, WO_STATUS } from '../common/Constants';
+import { SearchableDefectSelector } from '../common/SearchableDefectSelector';
+import { defectCodeAPI } from '../../api/defectCodeApi';
 
 const FrameAssemblyProc = () => {
     const { t } = useTranslation();
@@ -21,14 +23,16 @@ const FrameAssemblyProc = () => {
     if (!currentWorkstation) return null;
 
     const woData = currentWorkstation; 
-    const { inputMain, rawMaterials: rawRules } = woData.rules;
+    // ĐÃ SỬA: Hỗ trợ cả mảng mainInputs (mới) và inputMain đơn lẻ (cũ)
+    const mainInputRules = woData.rules.mainInputs || (woData.rules.inputMain ? [woData.rules.inputMain] : []);
+    const rawRules = woData.rules.rawMaterials;
 
     const availablePNs = [];
-    if (inputMain?.partNumber) availablePNs.push(inputMain.partNumber);
+    // Lấy PN từ tất cả các Main Inputs
+    mainInputRules.forEach(rule => { if (rule.partNumber) availablePNs.push(rule.partNumber); });
+    
     if (rawRules) {
-        rawRules.forEach(rule => {
-            if (rule.partNumber) availablePNs.push(rule.partNumber);
-        });
+        rawRules.forEach(rule => { if (rule.partNumber) availablePNs.push(rule.partNumber); });
     }
 
     // ==========================================
@@ -48,10 +52,22 @@ const FrameAssemblyProc = () => {
     // ==========================================
     // 3. STATE QUẢN LÝ MODALS (NG, MAT_REQ, MARK_DONE)
     // ==========================================
-    // ĐÃ SỬA: Thêm trường qty vào ngModal state
-    const [ngModal, setNgModal] = useState({ isOpen: false, pn: availablePNs[0] || '', desc: '', qty: '' });
+    const [ngModal, setNgModal] = useState({ isOpen: false, pn: availablePNs[0] || '', defectCode: '', desc: '', qty: '' });
     const [matReqModal, setMatReqModal] = useState({ isOpen: false, pn: availablePNs[0] || '', qty: '' });
     const [doneModal, setDoneModal] = useState({ isOpen: false, scannedWo: '', error: '' });
+
+    const [allDefectCodes, setAllDefectCodes] = useState([]);
+
+    // Fetch mã lỗi khi Load Trạm
+    useEffect(() => {
+        const fetchDefects = async () => {
+            try {
+                const res = await defectCodeAPI.getAllCodes();
+                if (res.success || res.data) setAllDefectCodes(res.data || res); // Tùy format API trả về
+            } catch (e) { console.error("Lỗi load Defect Codes", e); }
+        };
+        fetchDefects();
+    }, []);
 
     // Khôi phục UI
     useEffect(() => {
@@ -85,13 +101,19 @@ const FrameAssemblyProc = () => {
         const scannedCode = code.trim();
         setScanError('');
 
-        // 1. TRƯỜNG HỢP: MAIN INPUT (BATCH)
-        if (inputMain?.fixedString && scannedCode.includes(inputMain.fixedString)) {
+        // 1. TRƯỜNG HỢP: MAIN INPUT (BATCH) - Quét qua toàn bộ mảng mainInputRules
+        const matchedMainRule = mainInputRules.find(rule => scannedCode.includes(rule.fixedString));
+        
+        if (matchedMainRule) {
             try {
-                const result = await workstationAPI.logInputMainAssy(woData.WO, scannedCode);
+                // Gọi API như cũ (Backend không cần biết đây là chân trái hay phải, nó chỉ ghi nhận Batch)
+                const result = await workstationAPI.logInputMain(woData.WO, scannedCode);
                 if (result.success) {
                     setMainInputs([{ 
-                        code: scannedCode, time: new Date().toLocaleTimeString(), qty: 1 
+                        code: scannedCode, 
+                        pn: matchedMainRule.partNumber, // Ghi nhận thêm PN để hiển thị cho rõ
+                        time: new Date().toLocaleTimeString(), 
+                        qty: 1 
                     }, ...mainInputs]);
                     setMaterialInput('');
                 } else {
@@ -104,7 +126,7 @@ const FrameAssemblyProc = () => {
             return;
         }
 
-        // 2. TRƯỜNG HỢP: RAW MATERIAL
+        // 2. TRƯỜNG HỢP: RAW MATERIAL (Giữ nguyên)
         const matchedRawRule = rawRules?.find(rule => scannedCode.includes(rule.fixedString));
         if (matchedRawRule) {
             setQtyModal({ isOpen: true, scannedCode: scannedCode, matchedRule: matchedRawRule });
@@ -112,7 +134,7 @@ const FrameAssemblyProc = () => {
             return;
         }
 
-        setScanError(`Mã không hợp lệ: Không chứa chuỗi nhận diện cho Model ${woData.ModelNO}`);
+        setScanError(`Mã không hợp lệ: Không khớp với bất kỳ chuỗi nhận diện Vật tư nào của Model ${woData.ModelNO}`);
         setMaterialInput('');
     };
 
@@ -155,31 +177,52 @@ const FrameAssemblyProc = () => {
     // LOGIC CÁC TÍNH NĂNG THAO TÁC NHANH
     // ==========================================
     const handleSubmitNg = async () => {
-        // ĐÃ SỬA: Validate số lượng QTY trước khi gửi
+        // 1. KIỂM TRA VALIDATE SỐ LƯỢNG
         const ngQty = parseFloat(ngModal.qty);
-        if (isNaN(ngQty) || ngQty <= 0) return alert("Vui lòng nhập số lượng lỗi hợp lệ!");
-        if (!ngModal.desc.trim()) return alert("Vui lòng nhập mô tả lỗi!");
+        if (isNaN(ngQty) || ngQty <= 0) {
+            return alert("Vui lòng nhập số lượng hàng lỗi (QTY) hợp lệ và lớn hơn 0!");
+        }
+
+        // 2. KIỂM TRA VALIDATE MÃ LỖI ĐÃ ĐƯỢC CHỌN CHƯA
+        if (!ngModal.defectObject || !ngModal.defectObject.Code) {
+            return alert("Vui lòng chọn Loại lỗi (Defect Code) từ danh sách!");
+        }
         
         try {
-            // ĐÃ SỬA: Thêm QTY vào payload
+            // 3. ĐÓNG GÓI PAYLOAD THEO ĐÚNG CONCEPT MỚI
             const payload = { 
                 WO: woData.WO, 
                 PartNO: ngModal.pn, 
                 QTY: ngQty, 
-                Description: ngModal.desc, 
-                Type: MESSAGE_TYPE.DEFECT 
+                DefectCode: ngModal.defectObject.Code,         // Mã lỗi lấy từ Object
+                Station: ngModal.defectObject.Station,         // TRẠM LÝ THUYẾT (Chịu trách nhiệm)
+                Description: ngModal.desc || "",               // Ghi chú (Optional)
+                Type: MESSAGE_TYPE.DEFECT                      // Loại log là báo NG
             };
             
+            // 4. GỌI API GỬI XUỐNG SERVER
             const result = await workstationAPI.logDefect(payload);
+            
+            // 5. XỬ LÝ KẾT QUẢ TỪ SERVER
             if (result.success) {
-                alert("Đã gửi báo cáo NG thành công!");
-                // Reset lại toàn bộ field sau khi thành công
-                setNgModal({ isOpen: false, pn: availablePNs[0] || '', desc: '', qty: '' });
+                alert("Đã gửi báo cáo lỗi (NG) thành công!");
+                
+                // Đóng Modal và Reset toàn bộ dữ liệu Form về trạng thái ban đầu
+                setNgModal({ 
+                    isOpen: false, 
+                    pn: availablePNs[0] || '', // Trả về PN mặc định đầu tiên của Lệnh
+                    defectCode: '',            // Xóa text hiển thị
+                    defectObject: null,        // Xóa sạch Object data chứa Station
+                    desc: '',                  // Xóa ghi chú
+                    qty: ''                    // Xóa số lượng
+                });
             } else {
-                alert(result.message || "Lỗi khi báo cáo NG!");
+                alert(result.message || "Hệ thống từ chối báo cáo NG. Vui lòng kiểm tra lại!");
             }
         } catch (error) {
-            alert("Lỗi kết nối máy chủ!");
+            // Bắt lỗi mất kết nối mạng hoặc Server sập
+            const backendMessage = error.response?.data?.detail || error.response?.data?.message;
+            alert(backendMessage || "Lỗi kết nối máy chủ khi gửi báo cáo NG!");
         }
     };
 
@@ -287,7 +330,11 @@ const FrameAssemblyProc = () => {
                             ) : (
                                 mainInputs.map((item, idx) => (
                                     <div key={idx} className="flex flex-col sm:flex-row justify-between sm:items-center border-b border-slate-600/50 pb-3 gap-1 sm:gap-4">
-                                        <span className="text-blue-300 break-all">{item.code}</span>
+                                        <div className="flex flex-col">
+                                            <span className="text-blue-300 break-all">{item.code}</span>
+                                            {/* Hiển thị thêm PN nếu có */}
+                                            {item.pn && <span className="text-slate-500 text-xs mt-0.5">PN: {item.pn}</span>}
+                                        </div>
                                         <div className="flex gap-4 items-center">
                                             <span className="text-slate-400 text-xs sm:text-sm whitespace-nowrap bg-slate-800 px-2 py-1 rounded">1 pcs</span>
                                             <span className="text-slate-400 text-xs sm:text-sm whitespace-nowrap">{item.time}</span>
@@ -349,47 +396,64 @@ const FrameAssemblyProc = () => {
                     </div>
                 )}
 
-                {/* ĐÃ SỬA: MODAL BÁO LỖI NG THÊM INPUT QTY */}
                 {ngModal.isOpen && (
                     <div className="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
-                        <div className="bg-slate-800 w-full max-w-md rounded-2xl border border-red-500/50 shadow-2xl p-6 animate-fade-in-up">
-                            <h2 className="text-xl font-bold text-red-400 mb-4 border-b border-slate-700 pb-3 flex items-center gap-2"><AlertTriangle/> Báo Lỗi (NG)</h2>
-                            <div className="mb-4">
-                                <label className="block text-slate-300 font-bold mb-2">Chọn Part Number:</label>
-                                <select 
-                                    value={ngModal.pn} onChange={(e) => setNgModal({...ngModal, pn: e.target.value})}
-                                    className="w-full bg-slate-900 border border-slate-600 text-white px-4 py-3 rounded-lg focus:ring-2 focus:ring-red-500 outline-none font-mono"
-                                >
-                                    {availablePNs.map((pn, i) => <option key={i} value={pn}>{pn}</option>)}
-                                </select>
+                        <div className="bg-slate-800 w-full max-w-md rounded-2xl border border-red-500/50 shadow-2xl p-6 animate-fade-in-up flex flex-col max-h-[90vh]">
+                            <h2 className="text-xl font-bold text-red-400 mb-4 border-b border-slate-700 pb-3 flex items-center gap-2 shrink-0"><AlertTriangle/> Báo Lỗi (NG)</h2>
+                            
+                            <div className="overflow-y-auto custom-scrollbar pr-2 pb-4 space-y-4">
+                                {/* 1. Chọn Part Number */}
+                                <div>
+                                    <label className="block text-slate-300 font-bold mb-1">1. Part Number bị lỗi *</label>
+                                    <select 
+                                        value={ngModal.pn} onChange={(e) => setNgModal({...ngModal, pn: e.target.value})}
+                                        className="w-full bg-slate-900 border border-slate-600 text-white px-4 py-3 rounded-lg focus:ring-2 focus:ring-red-500 outline-none font-mono"
+                                    >
+                                        {availablePNs.map((pn, i) => <option key={i} value={pn}>{pn}</option>)}
+                                    </select>
+                                </div>
+                                
+                                {/* 2. Chọn Mã Lỗi (Component mới) */}
+                                <div>
+                                    <label className="block text-slate-300 font-bold mb-1">2. Loại lỗi (Defect Code) *</label>
+                                    <SearchableDefectSelector 
+                                        codes={allDefectCodes}
+                                        currentStation="Machining" /* Đã sửa đúng tên trạm */
+                                        selectedCode={ngModal.defectCode}
+                                        onSelect={(defectObj) => setNgModal({
+                                            ...ngModal, 
+                                            defectCode: defectObj.Code,      // Chỉ lưu chuỗi Code để component hiển thị UI
+                                            defectObject: defectObj          // LƯU CẢ OBJECT để hàm handleSubmitNg lấy được Station
+                                        })}
+                                    />
+                                </div>
+
+                                {/* 3. Nhập số lượng */}
+                                <div>
+                                    <label className="block text-slate-300 font-bold mb-1">3. Số lượng NG (QTY) *</label>
+                                    <input 
+                                        type="number" 
+                                        value={ngModal.qty} 
+                                        onChange={(e) => setNgModal({...ngModal, qty: e.target.value})}
+                                        className="w-full bg-slate-900 border border-slate-600 text-white px-4 py-3 rounded-lg focus:ring-2 focus:ring-red-500 outline-none font-mono text-xl text-center"
+                                        placeholder="0"
+                                    />
+                                </div>
+
+                                {/* 4. Mô tả phụ (Không bắt buộc) */}
+                                <div>
+                                    <label className="block text-slate-300 font-bold mb-1">4. Ghi chú thêm (Tùy chọn)</label>
+                                    <textarea 
+                                        value={ngModal.desc} onChange={(e) => setNgModal({...ngModal, desc: e.target.value})}
+                                        className="w-full bg-slate-900 border border-slate-600 text-white px-4 py-3 rounded-lg focus:ring-2 focus:ring-red-500 outline-none h-20"
+                                        placeholder="Nhập chi tiết nếu cần..."
+                                    />
+                                </div>
                             </div>
-                            <div className="mb-4">
-                                    <label className="block text-slate-300 font-bold mb-1">
-                                        Số lượng Sản phẩm NG (QTY):
-                                    </label>
-                                    <p className="text-amber-400/90 text-l italic mb-2 flex items-center gap-1">
-                                        <AlertTriangle size={30} />
-                                        * CHÚ Ý: Chỉ nhập số lượng THÀNH PHẨM đầu ra bị lỗi, KHÔNG nhập lượng vật tư lỗi.
-                                    </p>                            
-                                <input 
-                                    type="number" 
-                                    value={ngModal.qty} 
-                                    onChange={(e) => setNgModal({...ngModal, qty: e.target.value})}
-                                    className="w-full bg-slate-900 border border-slate-600 text-white px-4 py-3 rounded-lg focus:ring-2 focus:ring-red-500 outline-none font-mono text-xl text-center"
-                                    placeholder="0"
-                                />
-                            </div>
-                            <div className="mb-6">
-                                <label className="block text-slate-300 font-bold mb-2">Mô tả lỗi:</label>
-                                <textarea 
-                                    value={ngModal.desc} onChange={(e) => setNgModal({...ngModal, desc: e.target.value})}
-                                    className="w-full bg-slate-900 border border-slate-600 text-white px-4 py-3 rounded-lg focus:ring-2 focus:ring-red-500 outline-none h-24"
-                                    placeholder="Ghi chú chi tiết tình trạng..."
-                                />
-                            </div>
-                            <div className="flex gap-3">
-                                <button onClick={() => setNgModal({...ngModal, isOpen: false})} className="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-3 rounded-lg font-bold">HỦY</button>
-                                <button onClick={handleSubmitNg} className="flex-1 bg-red-600 hover:bg-red-500 text-white font-bold py-3 rounded-lg shadow-lg">GỬI BÁO CÁO</button>
+
+                            <div className="flex gap-3 pt-4 border-t border-slate-700 shrink-0">
+                                <button onClick={() => setNgModal({...ngModal, isOpen: false})} className="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-3 rounded-lg font-bold">HỦY BỎ</button>
+                                <button onClick={handleSubmitNg} className="flex-1 bg-red-600 hover:bg-red-500 text-white font-bold py-3 rounded-lg shadow-lg">XÁC NHẬN BÁO LỖI</button>
                             </div>
                         </div>
                     </div>

@@ -198,26 +198,58 @@ const FramePackingProc = () => {
         }
     };
 
-    const verifyAndMarkDone = async (woToVerify) => {
-        if (String(woToVerify) !== String(woData.WO)) {
-            setDoneModal({ ...doneModal, scannedWo: woToVerify, error: "Mã WO không khớp! Vui lòng quét đúng mã đang chạy." });
-            return;
-        }
+    // HÀM CHỐT LỆNH TỐI GIẢN (DÙNG CHUNG CẢ MACHINING & PACKING)
+    const verifyAndMarkDone = async (scannedWo) => {
         try {
-            const payload = { WO: woData.WO, Status: WO_STATUS.COMPLETED };
+            // 1. Ép kiểu an toàn tuyệt đối để chống lỗi ngầm (Silent Crash)
+            const safeScanned = String(scannedWo || "").trim();
+            const safeTarget = String(woData?.WO || "").trim();
+
+            if (!safeScanned) {
+                setDoneModal(prev => ({...prev, error: "Vui lòng quét hoặc nhập mã Lệnh!"}));
+                return;
+            }
+
+            if (safeScanned !== safeTarget) {
+                setDoneModal(prev => ({...prev, error: `Mã lệnh không khớp! Cần quét: ${safeTarget}`}));
+                return;
+            }
+
+            // Xóa lỗi cũ trên UI nếu có
+            setDoneModal(prev => ({...prev, error: ""}));
+
+            // 2. Ép kiểu Number (INT) chuẩn xác để chống lỗi 422 từ Server
+            const payload = { 
+                WO: parseInt(safeTarget), 
+                Status: 2 // 2 tương đương WO_STATUS.CLOSED
+            };
+            
             const result = await workstationAPI.markDone(payload);
-            if (result.success) {
-                alert("Đã chốt Lệnh Sản Xuất! Hệ thống đã ghi nhận.");
+            
+            if (result && result.success) {
+                alert("Đã chốt Lệnh thành công!");
+                setDoneModal({ isOpen: false, scannedWo: '', error: '' });
                 clearCurrentWorkstation();
             } else {
-                setDoneModal({ ...doneModal, error: result.message || "Lỗi khi chốt WO!" });
+                setDoneModal(prev => ({...prev, error: result?.message || "Lỗi từ máy chủ khi chốt lệnh!"}));
             }
         } catch (error) {
-            alert("Lỗi kết nối máy chủ!");
+            console.error("Lỗi API MarkDone:", error);
+            // 3. Xử lý an toàn để chống lỗi màn hình trắng (#31) của React
+            let errorMsg = "Lỗi kết nối máy chủ!";
+            if (error?.response?.data?.detail) {
+                const detail = error.response.data.detail;
+                errorMsg = typeof detail === 'string' ? detail : JSON.stringify(detail);
+            } else if (error?.response?.data?.message) {
+                errorMsg = error.response.data.message;
+            } else if (error?.message) {
+                errorMsg = error.message;
+            }
+            setDoneModal(prev => ({...prev, error: errorMsg}));
         }
     };
 
-    const handleDoneCameraScan = (decodedText) => { setShowDoneScanner(false); verifyAndMarkDone(decodedText); };
+    const handleDoneCameraScan = (decodedText) => { setShowDoneScanner(true); verifyAndMarkDone(decodedText); };
 
     return(
         <div className="w-full mx-auto bg-slate-800 rounded-2xl border border-slate-700 shadow-2xl flex flex-col overflow-hidden min-h-[700px] relative animate-fade-in">
@@ -380,18 +412,49 @@ const FramePackingProc = () => {
                     </div>
                 </div>
             )}
+            {/* 4. MODAL CHỐT LỆNH (MARK DONE) - TỐI GIẢN */}
             {doneModal.isOpen && (
-                <div className="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-slate-800 w-full max-w-md rounded-2xl border border-blue-500/50 shadow-2xl p-6 animate-fade-in-up text-center">
-                        <CheckCircle className="text-blue-400 mx-auto mb-3" size={48} />
-                        <h2 className="text-2xl font-bold text-white mb-2">Chốt Lệnh Đóng Gói</h2>
-                        <p className="text-slate-400 mb-6 text-sm">Vui lòng quét lại mã Lệnh Sản Xuất (WO) để xác nhận chốt ca.</p>
-                        <input type="text" autoFocus value={doneModal.scannedWo} onChange={(e) => setDoneModal({...doneModal, scannedWo: e.target.value})} onKeyDown={(e) => e.key === 'Enter' && verifyAndMarkDone(doneModal.scannedWo)} placeholder="Quét mã WO..." className={`w-full bg-slate-900 border ${doneModal.error ? 'border-red-500 focus:ring-red-500' : 'border-slate-600 focus:ring-blue-500'} text-white px-4 py-4 rounded-xl focus:ring-2 outline-none font-mono text-xl text-center tracking-widest mb-4`} />
-                        <button onClick={() => setShowDoneScanner(true)} className="w-full bg-slate-700 hover:bg-slate-600 border border-slate-500 text-white font-bold py-3 rounded-lg mb-2 flex items-center justify-center gap-2 transition-all"><Camera size={20} /> MỞ CAMERA QUÉT MÃ WO</button>
-                        {doneModal.error && <p className="text-red-400 text-sm mb-2 animate-pulse font-semibold">{doneModal.error}</p>}
-                        <div className="flex gap-3 mt-4">
-                            <button onClick={() => setDoneModal({...doneModal, isOpen: false})} className="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-3 rounded-lg font-bold">QUAY LẠI</button>
-                            <button onClick={() => verifyAndMarkDone(doneModal.scannedWo)} className="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-lg shadow-lg">XÁC NHẬN CHỐT</button>
+                <div className="fixed inset-0 z-[100] bg-slate-900/90 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+                    <div className="bg-slate-800 rounded-2xl w-full max-w-md border border-slate-600 shadow-2xl overflow-hidden">
+                        <div className="bg-rose-500/20 p-4 border-b border-rose-500/50 flex justify-between items-center">
+                            <h3 className="text-rose-400 font-bold flex items-center gap-2"><AlertTriangle /> XÁC NHẬN CHỐT LỆNH</h3>
+                        </div>
+                        <div className="p-6">
+                            <p className="text-slate-300 text-sm mb-4">
+                                Vui lòng quét hoặc nhập mã Lệnh <b className="text-white bg-slate-700 px-2 py-0.5 rounded">{woData?.WO}</b> để xác nhận hoàn thành (Đóng WO).
+                            </p>
+                            
+                            <input 
+                                type="text" 
+                                autoFocus
+                                value={doneModal.scannedWo || ''} 
+                                onChange={(e) => setDoneModal(prev => ({...prev, scannedWo: e.target.value}))} 
+                                onKeyDown={(e) => e.key === 'Enter' && verifyAndMarkDone(doneModal.scannedWo)}
+                                className={`w-full bg-slate-900 border ${doneModal.error ? 'border-red-500' : 'border-slate-600'} text-white px-4 py-4 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-mono text-xl text-center tracking-widest mb-4`}
+                                placeholder="Quét mã Lệnh..."
+                            />
+
+                            <button 
+                                onClick={() => setShowDoneScanner(true)} 
+                                className="w-full bg-slate-700 hover:bg-slate-600 border border-slate-500 text-white font-bold py-3 rounded-lg mb-2 flex items-center justify-center gap-2 transition-all"
+                            >
+                                <Camera size={20} /> MỞ CAMERA QUÉT MÃ WO
+                            </button>
+
+                            {doneModal.error && (
+                                <p className="text-red-400 text-sm mb-2 animate-pulse font-bold break-words">
+                                    {doneModal.error}
+                                </p>
+                            )}
+
+                            <div className="flex gap-3 mt-4">
+                                <button onClick={() => setDoneModal({isOpen: false, scannedWo: '', error: ''})} className="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-3 rounded-lg font-bold">
+                                    QUAY LẠI
+                                </button>
+                                <button onClick={() => verifyAndMarkDone(doneModal.scannedWo)} className="flex-1 bg-rose-600 hover:bg-rose-500 text-white font-bold py-3 rounded-lg shadow-lg">
+                                    XÁC NHẬN CHỐT
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>

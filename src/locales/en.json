@@ -20,7 +20,9 @@
     "logout": "Sign Out",
     "unknownUser": "Unknown User",
     "operator": "Operator",
-    "accounts": "Accounts Manager"
+    "accounts": "Accounts Manager",
+    "mainscreen": "Main Screen",
+    "defects": "Config Defect Codes"
   },
   "navbar": {
     "overview": "Overview",
@@ -49,7 +51,7 @@
   "date": "Datetime",
   "status": "Status",
   "batch": "Batch ID",
-  "markDone": "Mark Done",
+  "markDone": "MARK DONE",
   "ngReport": "NG REPORT",
   "matRequest": "MAT REQUEST",
   "scan": "Scan",

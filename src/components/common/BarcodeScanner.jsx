@@ -36,7 +36,7 @@ const BarcodeScanner = ({ onScanSuccess, onClose }) => {
     }, []);
 
     return (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in">
+        <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in">
             <div className="bg-white rounded-2xl w-full max-w-sm overflow-hidden relative shadow-2xl">
                 <div className="bg-slate-900 p-4 flex justify-between items-center border-b border-slate-700">
                     <h3 className="text-white font-bold">Quét Mã</h3>

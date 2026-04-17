@@ -99,20 +99,6 @@ const ActiveJobView = () => {
         const { type, Type, QTY_Processed, Status, AliasWO } = currentWorkstation;
         const rawType = type || Type || '';
         const finalType = rawType ? rawType.trim().charAt(0).toUpperCase() + rawType.trim().slice(1).toLowerCase() : 'Unknown';
-
-        if (Status === 0) {
-            return (
-                <div className="flex flex-col gap-6 animate-fade-in-up relative">
-                    {liveWOData && (
-                        <div className="max-w-6xl mx-auto w-full">
-                            <WorkOrderCard data={liveWOData} aliasWO={AliasWO} />
-                        </div>
-                    )}
-                    <FrameBatchAllocator />
-                </div>
-            );
-        }
-
         const needsWctr = QTY_Processed === 0 && !isWctrConfirmed;
 
         return (
@@ -127,7 +113,7 @@ const ActiveJobView = () => {
                 {finalType === 'Assembly' && <FrameAssemblyProc />}
                 {finalType === 'Packing' && <FramePackingProc />}
                 
-                {!['Machining', 'Assembly', 'Packing'].includes(finalType) && (
+                {!['Machining', 'Assembly', 'Packing', ].includes(finalType) && (
                     <div className="p-8 text-red-400 font-bold text-center border border-red-500/30 rounded-xl bg-red-500/10">
                         Lỗi: Trạm "{finalType}" hiện chưa được hỗ trợ giao diện thao tác!
                     </div>

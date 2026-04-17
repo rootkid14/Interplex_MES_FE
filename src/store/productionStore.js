@@ -3,7 +3,7 @@ import { create } from 'zustand';
 
 const useProductionStore = create((set, get) => ({
   // 1. STATE AUTH (Giữ nguyên của bạn)
-  isAuthenticated: true, 
+  isAuthenticated: false, 
 
   // 2. STATE CHỨA DỮ LIỆU REAL-TIME (TỪ SSE)
   activeJobs: [],

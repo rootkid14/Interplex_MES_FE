@@ -1,31 +1,27 @@
 import React, { useState, useEffect } from "react";
 import { ActionButton } from "../common/ActionButton";
-import { ScanLine, XCircle, CheckCircle, Package, Box, Printer, FilePlus, CheckSquare, Square, X, CheckCheck, Cpu, MousePointerClick, RefreshCcw } from "lucide-react";
+import { Truck, XCircle, CheckCircle, Package, Box, Printer, FilePlus, CheckSquare, Square, X, CheckCheck, Cpu, MousePointerClick, RefreshCcw } from "lucide-react";
 import useProductionStore from '../../store/productionStore';
 import { workstationAPI } from '../../api/workstationApi';
 
-const FrameBatchAllocator = () => {
+const FrameOutSourceAllocator = () => {
     // ==========================================
     // 1. STATE & STORE
     // ==========================================
     const currentWorkstation = useProductionStore(state => state.currentWorkstation);
     const clearCurrentWorkstation = useProductionStore(state => state.clearCurrentWorkstation);
-    const liveWOData = useProductionStore(state => state.activeJobs.find(job => job.WO === state.currentWorkstation?.WO));
-    
     const woData = currentWorkstation;
 
     const [cards, setCards] = useState([]); 
     const [config, setConfig] = useState({ pn: '', maxQty: '' });
     const [loading, setLoading] = useState(false);
     
-    // STATE IN ẤN (UX MỚI)
+    // STATE IN ẤN
     const [showPrintTypeSelector, setShowPrintTypeSelector] = useState(false);
-    const [printMode, setPrintMode] = useState('none'); // 'none', 'new', 'reprint'
+    const [printMode, setPrintMode] = useState('none'); 
     const [selectedForPrint, setSelectedForPrint] = useState([]);
 
     const wo = woData?.WO;
-    const currentWOStatus = liveWOData?.Status ?? woData?.Status;
-    const isWOInProgress = currentWOStatus === 1;
 
     // ==========================================
     // 2. DATA FETCHING
@@ -49,27 +45,23 @@ const FrameBatchAllocator = () => {
     // ==========================================
     // 3. TÍNH TOÁN TIẾN ĐỘ CHUẨN XÁC
     // ==========================================
-    const totalProducedOK = liveWOData?.QTY_OK ?? woData?.QTY_OK ?? 0;
+    // Điểm KHÁC BIỆT CHÍNH SO VỚI INHOUSE: Lấy QTY_OK (Tổng lượng đã nhận từ Vendor) làm mốc
+    const totalProducedOK = woData?.QTY_OK || 0;
     const totalAllocated = cards.reduce((sum, c) => sum + (c.qty || 0), 0);
     const remainingToAllocate = totalProducedOK - totalAllocated;
     
     const isConfigLocked = cards.length > 0; 
     const maxQtyNum = parseInt(config.maxQty) || 0;
 
-    const canGenerate = isWOInProgress 
-        ? (remainingToAllocate >= maxQtyNum && maxQtyNum > 0)
-        : (remainingToAllocate > 0 && maxQtyNum > 0);
+    // OUTSOURCE LUÔN LUÔN CHO PHÉP TẠO LÔ LẺ (Vì quy trình In-Progress không áp dụng khắt khe như inhouse)
+    const canGenerate = remainingToAllocate > 0 && maxQtyNum > 0;
 
     // ==========================================
-    // 4. HÀM GỌI API (WORKFLOW NEW)
+    // 4. HÀM GỌI API ALLOCATION
     // ==========================================
     const handleGenerate = async () => {
-        if (!config.pn || !maxQtyNum) return alert("Vui lòng nhập Part Number và Max QTY!");
+        if (!config.pn || !maxQtyNum) return alert("Vui lòng nhập Part Number mới và Max QTY!");
         
-        if (isWOInProgress && remainingToAllocate < maxQtyNum) {
-            return alert(`WO đang chạy. Bạn còn ${remainingToAllocate} chiếc, chưa đủ để chốt 1 lô (${maxQtyNum})!`);
-        }
-
         const res = await workstationAPI.generateBatches({ WO: wo, PN: config.pn, MaxQTY: maxQtyNum });
         if (res.success) {
             alert(res.message);
@@ -143,7 +135,7 @@ const FrameBatchAllocator = () => {
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `Print_WO_${wo}_${new Date().getTime()}.txt`; 
+            a.download = `Outsource_Print_WO_${Math.abs(wo)}_${new Date().getTime()}.txt`; 
             a.click();
             URL.revokeObjectURL(url);
 
@@ -166,12 +158,10 @@ const FrameBatchAllocator = () => {
     if (!currentWorkstation) return null;
 
     const isPrintModeActive = printMode !== 'none';
-
-    // ĐẢO NGƯỢC MẢNG ĐỂ HIỂN THỊ THẺ MỚI NHẤT LÊN TRÊN CÙNG
     const displayCards = [...cards].reverse(); 
 
     return (
-        <div className="flex flex-col h-full bg-slate-900 border-l border-slate-700 animate-fade-in relative z-10">
+        <div className="flex flex-col h-full bg-slate-900 border-l-4 border-yellow-600 animate-fade-in relative z-10">
             
             {/* ================================================== */}
             {/* HEADER & THIẾT LẬP */}
@@ -179,72 +169,68 @@ const FrameBatchAllocator = () => {
             <div className="bg-slate-800 p-4 sm:p-6 shadow-md z-10 flex-shrink-0 border-b border-slate-700">
                 <div className="flex justify-between items-start mb-6">
                     <div>
-                        <h2 className="text-2xl font-black text-white flex items-center gap-3 tracking-wide">
-                            <ScanLine className="text-blue-400" size={28} /> BATCH ALLOCATION
+                        <h2 className="text-3xl font-black text-white flex items-center gap-3 tracking-tighter">
+                            <Truck className="text-yellow-500" size={32} /> OUTSOURCE ALLOCATION
                         </h2>
                         <div className="mt-2 flex flex-wrap items-center gap-3 text-sm">
-                            <span className="bg-blue-500/20 text-blue-300 border border-blue-500/30 px-3 py-1 rounded-md font-mono font-bold tracking-wider flex items-center gap-2">
-                                WO: {wo}
+                            <span className="bg-yellow-500/20 text-yellow-400 border border-yellow-500/30 px-3 py-1 rounded-md font-mono font-bold tracking-wider flex items-center gap-2">
+                                ORIGIN WO: {Math.abs(wo)}
                             </span>
                             {woData?.ModelNO && (
                                 <span className="bg-purple-500/20 text-purple-300 border border-purple-500/30 px-3 py-1 rounded-md font-mono font-bold tracking-wider flex items-center gap-2">
                                     <Cpu size={14}/> MODEL: {woData.ModelNO}
                                 </span>
                             )}
-                            <span className={`px-2 py-1 rounded-md text-xs font-bold ${isWOInProgress ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
-                                {isWOInProgress ? '● IN-PROGRESS' : '● CLOSED'}
+                            <span className="bg-slate-700 text-slate-300 px-3 py-1 rounded-md font-bold">
+                                MODE: RECEIVING & RE-LABELING
                             </span>
                         </div>
                     </div>
                     {!isPrintModeActive && (
-                        <ActionButton icon={<XCircle size={24} />} label="Đóng" color="red" onClick={clearCurrentWorkstation} />
+                        <ActionButton icon={<XCircle size={24} />} label="Thoát" color="red" onClick={clearCurrentWorkstation} />
                     )}
                 </div>
 
-                <div className="bg-slate-900/60 p-4 rounded-2xl border border-slate-700 shadow-inner">
-                    <div className="grid grid-cols-3 gap-3 mb-5 text-center">
-                        <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-600/50">
-                            <span className="text-xs text-slate-400 font-bold uppercase tracking-wider block mb-1">Produced (OK)</span>
-                            <span className="text-blue-400 font-black text-2xl">{totalProducedOK}</span>
+                <div className="bg-slate-900/80 p-4 rounded-3xl border border-yellow-500/20 shadow-inner">
+                    <div className="grid grid-cols-3 gap-3 sm:gap-4 mb-5 text-center">
+                        <div className="bg-slate-800 p-3 sm:p-4 rounded-2xl border border-slate-700">
+                            <span className="text-[10px] sm:text-xs text-slate-400 font-bold uppercase block mb-1">Total Received</span>
+                            <span className="text-yellow-500 font-black text-2xl sm:text-3xl">{totalProducedOK}</span>
                         </div>
-                        <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-600/50">
-                            <span className="text-xs text-slate-400 font-bold uppercase tracking-wider block mb-1">Allocated</span>
-                            <span className="text-emerald-400 font-black text-2xl">{totalAllocated}</span>
+                        <div className="bg-slate-800 p-3 sm:p-4 rounded-2xl border border-slate-700">
+                            <span className="text-[10px] sm:text-xs text-slate-400 font-bold uppercase block mb-1">Re-Labeled</span>
+                            <span className="text-emerald-400 font-black text-2xl sm:text-3xl">{totalAllocated}</span>
                         </div>
-                        <div className="bg-slate-800/80 p-3 rounded-xl border border-orange-500/20 relative">
-                            <span className="text-xs text-slate-400 font-bold uppercase tracking-wider block mb-1">Wait Allocate</span>
-                            <span className={`font-black text-2xl ${remainingToAllocate < 0 ? 'text-red-500' : 'text-orange-400'}`}>{remainingToAllocate}</span>
+                        <div className="bg-slate-800 p-3 sm:p-4 rounded-2xl border border-yellow-500/30 shadow-[0_0_10px_rgba(234,179,8,0.1)]">
+                            <span className="text-[10px] sm:text-xs text-yellow-500 font-bold uppercase block mb-1">Wait Re-Label</span>
+                            <span className="text-white font-black text-2xl sm:text-3xl">{remainingToAllocate}</span>
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-end">
-                        <div className="sm:col-span-7">
-                            <label className="text-xs text-slate-400 font-bold uppercase mb-1.5 block ml-1">Part Number (PN)</label>
+                    <div className="flex flex-col sm:flex-row gap-4 items-end">
+                        <div className="flex-[3]">
+                            <label className="text-xs text-slate-500 font-black uppercase mb-2 block ml-2">New Part Number (Sau Outsource)</label>
                             <input 
                                 type="text" disabled={isConfigLocked || isPrintModeActive} value={config.pn} 
                                 onChange={(e) => setConfig({...config, pn: e.target.value.toUpperCase()})}
-                                placeholder="Nhập PN của tem..."
-                                className={`w-full bg-slate-900 border border-slate-600 text-white px-4 py-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all ${(isConfigLocked || isPrintModeActive) ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                className={`w-full bg-slate-900 border-2 border-slate-700 text-white px-5 py-3.5 rounded-2xl focus:border-yellow-500 outline-none transition-all font-bold ${(isConfigLocked || isPrintModeActive) ? 'opacity-50 cursor-not-allowed' : ''}`}
                             />
                         </div>
-                        <div className="sm:col-span-3">
-                            <label className="text-xs text-slate-400 font-bold uppercase mb-1.5 block ml-1">Max QTY/Batch</label>
+                        <div className="flex-1">
+                            <label className="text-xs text-slate-500 font-black uppercase mb-2 block ml-2">QTY/Lô</label>
                             <input 
                                 type="number" disabled={isConfigLocked || isPrintModeActive} value={config.maxQty} 
                                 onChange={(e) => setConfig({...config, maxQty: e.target.value})}
-                                placeholder="VD: 50"
-                                className={`w-full bg-slate-900 border border-slate-600 text-white px-4 py-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-center font-mono text-lg transition-all ${(isConfigLocked || isPrintModeActive) ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                className={`w-full bg-slate-900 border-2 border-slate-700 text-white px-5 py-3.5 rounded-2xl text-center font-black text-xl ${(isConfigLocked || isPrintModeActive) ? 'opacity-50 cursor-not-allowed' : ''}`}
                             />
                         </div>
-                        <div className="sm:col-span-2">
-                            <button 
-                                onClick={handleGenerate}
-                                disabled={!canGenerate || isPrintModeActive}
-                                className={`w-full h-[52px] flex items-center justify-center gap-2 rounded-xl font-black tracking-wider transition-all shadow-lg ${(!canGenerate || isPrintModeActive) ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-500 text-white border border-blue-500 shadow-blue-900/50 active:scale-95'}`}
-                            >
-                                <FilePlus size={20}/> TẠO MÃ
-                            </button>
-                        </div>
+                        <button 
+                            onClick={handleGenerate}
+                            disabled={!canGenerate || isPrintModeActive}
+                            className={`h-[60px] px-10 rounded-2xl font-black transition-all flex items-center justify-center gap-2 whitespace-nowrap w-full sm:w-auto ${(!canGenerate || isPrintModeActive) ? 'bg-slate-800 text-slate-500 border-2 border-slate-700 cursor-not-allowed' : 'bg-yellow-600 hover:bg-yellow-500 text-white shadow-lg shadow-yellow-900/40 active:scale-95'}`}
+                        >
+                            <FilePlus size={24}/> TẠO MÃ TEM
+                        </button>
                     </div>
                 </div>
             </div>
@@ -301,11 +287,11 @@ const FrameBatchAllocator = () => {
                                         </div>
                                     )}
 
-                                    {/* Hàng 1: Icon + Barcode + Trạng thái (Inline gọn gàng) */}
+                                    {/* Hàng 1: Icon + Barcode + Trạng thái */}
                                     <div className="flex items-center justify-between mb-2">
                                         <div className={`flex items-center gap-2.5 min-w-0 ${isPrintModeActive && isEligible ? 'pr-7' : ''}`}>
                                             <div className="bg-slate-700/50 p-1.5 rounded-lg shrink-0">
-                                                <Package className="text-blue-400" size={16} />
+                                                <Package className="text-yellow-500" size={16} />
                                             </div>
                                             <p className={`font-mono font-bold text-base truncate tracking-wider ${isSelected ? 'text-white' : 'text-slate-200'}`} title={card.barcode}>
                                                 {card.barcode}
@@ -315,7 +301,7 @@ const FrameBatchAllocator = () => {
                                             <span className={`text-[10px] font-black px-2 py-1 rounded uppercase tracking-wider shrink-0 ${
                                                 card.state === 'Exported' ? 'bg-slate-700 text-slate-400' :
                                                 card.state === 'Wait-Printing' ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30' :
-                                                'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                                                'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30'
                                             }`}>
                                                 {card.state === 'Exported' ? 'Đã Xuất' : card.state === 'Wait-Printing' ? 'Chờ In' : 'Chờ Duyệt'}
                                             </span>
@@ -340,7 +326,7 @@ const FrameBatchAllocator = () => {
             </div>
 
             {/* ================================================== */}
-            {/* FLOATING ACTION PILL (Thanh Xác Nhận In Tối Giản) */}
+            {/* FLOATING ACTION PILL (Thanh Xác Nhận In) */}
             {/* ================================================== */}
             {isPrintModeActive && (
                 <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-slate-800 border-2 border-orange-500/80 rounded-full pl-6 pr-2 py-2 shadow-[0_10px_40px_rgba(234,88,12,0.3)] z-50 flex items-center gap-4 animate-fade-in-up w-max max-w-[90vw]">
@@ -421,4 +407,4 @@ const FrameBatchAllocator = () => {
     );
 };
 
-export default FrameBatchAllocator;
+export default FrameOutSourceAllocator;

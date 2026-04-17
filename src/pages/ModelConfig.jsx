@@ -50,7 +50,7 @@ const ModelCard = ({ model, onModify, onDelete }) => {
       {/* KHU VỰC NÚT BẤM ACTIONS */}
       <div className="flex items-center gap-3 w-full sm:w-auto">
         <ActionButton 
-          label="Modify JSON" 
+          label="Config" 
           color="blue" 
           icon={<Settings2 size={16} />} 
           onClick={() => onModify(model)} 
@@ -136,20 +136,38 @@ const OutputMain = ({ data, updateData }) => (
   </div>
 );
 
-const InputMain = ({ data, updateData }) => (
-  <div className="p-4 bg-blue-900/20 border border-blue-500/30 rounded-lg mt-4">
-    <h4 className="text-blue-400 font-bold mb-3 border-b border-blue-500/30 pb-2">🔵 Input Main</h4>
-    <div className="grid grid-cols-2 gap-4">
-      <div><label className="text-xs text-slate-400">Part Number</label><input type="text" value={data?.partNumber || ''} onChange={e => updateData('inputMain', 'partNumber', e.target.value)} className="w-full bg-slate-700 text-white px-3 py-1.5 rounded mt-1 outline-none focus:border-blue-500 border border-slate-600" /></div>
-      <div><label className="text-xs text-slate-400">Fixed String</label><input type="text" value={data?.fixedString || ''} onChange={e => updateData('inputMain', 'fixedString', e.target.value)} className="w-full bg-slate-700 text-white px-3 py-1.5 rounded mt-1 outline-none focus:border-blue-500 border border-slate-600" /></div>
+// XÓA BỎ Component InputMain cũ, thay bằng MainInputRow
+const MainInputRow = ({ data, index, updateMainInput, removeMainInput }) => (
+  <div className="flex gap-4 items-end mb-3">
+    <div className="flex-1">
+      <label className="text-xs text-slate-400">Main PN #{index + 1}</label>
+      <input type="text" value={data.partNumber || ''} onChange={e => updateMainInput(index, 'partNumber', e.target.value)} className="w-full bg-slate-700 text-white px-3 py-1.5 rounded mt-1 outline-none focus:border-blue-500 border border-slate-600" />
     </div>
+    <div className="flex-1">
+      <label className="text-xs text-slate-400">Fixed String</label>
+      <input type="text" value={data.fixedString || ''} onChange={e => updateMainInput(index, 'fixedString', e.target.value)} className="w-full bg-slate-700 text-white px-3 py-1.5 rounded mt-1 outline-none focus:border-blue-500 border border-slate-600" />
+    </div>
+    {/* Nút xóa dòng */}
+    <button onClick={() => removeMainInput(index)} className="p-2 mb-0.5 bg-red-500/10 text-red-400 hover:bg-red-500/30 rounded transition-colors" title="Xóa Input này">
+      <Trash2 size={18}/>
+    </button>
   </div>
 );
 
-const RawMaterial = ({ data, index, updateMaterial }) => (
+// Cập nhật lại RawMaterial để có thêm nút XÓA
+const RawMaterialRow = ({ data, index, updateMaterial, removeMaterial }) => (
   <div className="flex gap-4 items-end mb-3">
-    <div className="flex-1"><label className="text-xs text-slate-400">PN #{index + 1}</label><input type="text" value={data.partNumber} onChange={e => updateMaterial(index, 'partNumber', e.target.value)} className="w-full bg-slate-700 text-white px-3 py-1.5 rounded mt-1 outline-none border border-slate-600" /></div>
-    <div className="flex-1"><label className="text-xs text-slate-400">Fixed String</label><input type="text" value={data.fixedString} onChange={e => updateMaterial(index, 'fixedString', e.target.value)} className="w-full bg-slate-700 text-white px-3 py-1.5 rounded mt-1 outline-none border border-slate-600" /></div>
+    <div className="flex-1">
+      <label className="text-xs text-slate-400">Raw PN #{index + 1}</label>
+      <input type="text" value={data.partNumber} onChange={e => updateMaterial(index, 'partNumber', e.target.value)} className="w-full bg-slate-700 text-white px-3 py-1.5 rounded mt-1 outline-none focus:border-emerald-500 border border-slate-600" />
+    </div>
+    <div className="flex-1">
+      <label className="text-xs text-slate-400">Fixed String</label>
+      <input type="text" value={data.fixedString} onChange={e => updateMaterial(index, 'fixedString', e.target.value)} className="w-full bg-slate-700 text-white px-3 py-1.5 rounded mt-1 outline-none focus:border-emerald-500 border border-slate-600" />
+    </div>
+    <button onClick={() => removeMaterial(index)} className="p-2 mb-0.5 bg-red-500/10 text-red-400 hover:bg-red-500/30 rounded transition-colors" title="Xóa Phụ liệu này">
+      <Trash2 size={18}/>
+    </button>
   </div>
 );
 
@@ -157,26 +175,58 @@ const RawMaterial = ({ data, index, updateMaterial }) => (
 // COMPONENT 2: CONFIG TABLE (Modal)
 // ==========================================
 const ConfigTable = ({ modelData, onClose, onSave }) => {
-  const [localJson, setLocalJson] = useState(modelData.jsonData || { rawMaterials: [] });
-
-  const updateData = (blockName, field, value) => {
-    setLocalJson(prev => ({
-      ...prev,
-      [blockName]: { ...prev[blockName], [field]: value }
-    }));
+  
+  // TỰ ĐỘNG CHUYỂN ĐỔI (BACKWARD COMPATIBILITY)
+  // Nếu dữ liệu cũ có inputMain (Object) thì ép nó vào mảng mainInputs
+  const getInitialJson = () => {
+    let json = modelData.jsonData || {};
+    if (json.inputMain && !json.mainInputs) {
+      json.mainInputs = [json.inputMain]; // Đưa vào mảng
+      delete json.inputMain; // Dọn rác
+    }
+    if (!json.mainInputs) json.mainInputs = [];
+    if (!json.rawMaterials) json.rawMaterials = [];
+    return json;
   };
 
+  const [localJson, setLocalJson] = useState(getInitialJson());
+
+  const updateData = (blockName, field, value) => {
+    setLocalJson(prev => ({ ...prev, [blockName]: { ...prev[blockName], [field]: value } }));
+  };
+
+  // --- CÁC HÀM XỬ LÝ RAW MATERIAL ---
   const updateMaterial = (index, field, value) => {
     const updatedMaterials = [...(localJson.rawMaterials || [])];
     updatedMaterials[index] = { ...updatedMaterials[index], [field]: value };
     setLocalJson(prev => ({ ...prev, rawMaterials: updatedMaterials }));
   };
 
-  const HandleAddMaterial = () => {
-    setLocalJson(prev => ({
-      ...prev,
-      rawMaterials: [...(prev.rawMaterials || []), { partNumber: "", fixedString: "" }]
-    }));
+  const handleAddMaterial = () => {
+    setLocalJson(prev => ({ ...prev, rawMaterials: [...(prev.rawMaterials || []), { partNumber: "", fixedString: "" }] }));
+  };
+
+  const handleRemoveMaterial = (index) => {
+    const updatedMaterials = [...(localJson.rawMaterials || [])];
+    updatedMaterials.splice(index, 1);
+    setLocalJson(prev => ({ ...prev, rawMaterials: updatedMaterials }));
+  };
+
+  // --- CÁC HÀM XỬ LÝ MAIN INPUT (MỚI) ---
+  const updateMainInput = (index, field, value) => {
+    const updatedInputs = [...(localJson.mainInputs || [])];
+    updatedInputs[index] = { ...updatedInputs[index], [field]: value };
+    setLocalJson(prev => ({ ...prev, mainInputs: updatedInputs }));
+  };
+
+  const handleAddMainInput = () => {
+    setLocalJson(prev => ({ ...prev, mainInputs: [...(prev.mainInputs || []), { partNumber: "", fixedString: "" }] }));
+  };
+
+  const handleRemoveMainInput = (index) => {
+    const updatedInputs = [...(localJson.mainInputs || [])];
+    updatedInputs.splice(index, 1);
+    setLocalJson(prev => ({ ...prev, mainInputs: updatedInputs }));
   };
 
   const HandleSaveConfig = () => {
@@ -201,16 +251,41 @@ const ConfigTable = ({ modelData, onClose, onSave }) => {
             </>
           )}
 
-          {/* CÁC RULE CHUNG CHO CẢ ASSEMBLY LẪN MACHINING */}
-          <InputMain data={localJson.inputMain} updateData={updateData} />
-          
-          <div className="p-4 bg-slate-700/30 border border-slate-600 rounded-lg mt-4">
-            <h4 className="text-slate-300 font-bold mb-3 border-b border-slate-600 pb-2">🔩 Raw Materials</h4>
-            {localJson.rawMaterials?.map((mat, idx) => (
-              <RawMaterial key={idx} index={idx} data={mat} updateMaterial={updateMaterial} />
+          {/* BLOCK: MAIN INPUTS (Thay thế cho InputMain cũ) */}
+          <div className="p-4 bg-blue-900/20 border border-blue-500/30 rounded-lg mt-4 shadow-inner">
+            <h4 className="text-blue-400 font-bold mb-3 border-b border-blue-500/30 pb-2">🔵 Main Inputs</h4>
+            
+            {localJson.mainInputs?.map((mat, idx) => (
+              <MainInputRow 
+                key={`main-${idx}`} 
+                index={idx} 
+                data={mat} 
+                updateMainInput={updateMainInput} 
+                removeMainInput={handleRemoveMainInput} 
+              />
             ))}
-            <button onClick={HandleAddMaterial} className="mt-2 flex items-center gap-2 text-sm text-blue-400 hover:text-blue-300 font-bold px-3 py-2 rounded bg-blue-500/10 hover:bg-blue-500/20 transition-colors">
-              <Plus size={16} /> Add Material
+            
+            <button onClick={handleAddMainInput} className="mt-2 flex items-center gap-2 text-sm text-blue-400 hover:text-blue-300 font-bold px-3 py-2 rounded bg-blue-500/10 hover:bg-blue-500/20 transition-colors">
+              <Plus size={16} /> Add Main Input
+            </button>
+          </div>
+          
+          {/* BLOCK: RAW MATERIALS (Đã cập nhật tên Component và truyền hàm Remove) */}
+          <div className="p-4 bg-slate-700/30 border border-slate-600 rounded-lg mt-4 shadow-inner">
+            <h4 className="text-slate-300 font-bold mb-3 border-b border-slate-600 pb-2">🔩 Raw Materials</h4>
+            
+            {localJson.rawMaterials?.map((mat, idx) => (
+              <RawMaterialRow 
+                key={`raw-${idx}`} 
+                index={idx} 
+                data={mat} 
+                updateMaterial={updateMaterial} 
+                removeMaterial={handleRemoveMaterial} 
+              />
+            ))}
+            
+            <button onClick={handleAddMaterial} className="mt-2 flex items-center gap-2 text-sm text-emerald-400 hover:text-emerald-300 font-bold px-3 py-2 rounded bg-emerald-500/10 hover:bg-emerald-500/20 transition-colors">
+              <Plus size={16} /> Add Raw Material
             </button>
           </div>
 

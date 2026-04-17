@@ -1,6 +1,6 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
-import { LayoutDashboard, ScanLine, Search } from 'lucide-react';
+import { LayoutDashboard, ScanLine, Search, Boxes } from 'lucide-react';
 
 const WorkStationNavbar = ({ activeTab, setActiveTab }) => {
   const { t } = useTranslation();
@@ -25,6 +25,11 @@ const WorkStationNavbar = ({ activeTab, setActiveTab }) => {
           icon={<ScanLine size={18} />}
           label={t('navbar.production')}
         />
+        <NavTab 
+          active={activeTab === 'allocation'} 
+          onClick={() => setActiveTab('allocation')} 
+          icon={<Boxes size={18} />} 
+          label="Allocation" />
         <NavTab 
           active={activeTab === 'traceability'} 
           onClick={() => setActiveTab('traceability')} 

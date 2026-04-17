@@ -6,8 +6,9 @@ export const workstationAPI = {
    * @param {string} scannedWO - Mã WO vừa quét
    * @returns {Promise<Object>} - Gói StandardResponse { success, message, data }
    */
-  validateWorkOrder: async (scannedWO) => {
-    const response = await apiClient.get(`/validation/validate/${scannedWO}`);
+  validateWorkOrder: async (scannedWO, isAllocation = false) => {
+    // Truyền cờ is_allocation lên Backend qua Query Parameter
+    const response = await apiClient.get(`/validation/validate/${scannedWO}?is_allocation=${isAllocation}`);
     return response.data; 
   },
   
@@ -36,14 +37,7 @@ export const workstationAPI = {
     });
     return response.data;
   },
-
-  logInputMainAssy: async (wo, batchCode) => {
-    const response = await apiClient.post('/validation/logInputMainAssy', {
-        WO: wo,
-        Batch: batchCode
-    });
-    return response.data;
-  },
+  
 
   logRawMaterial: async (wo, materialCode, qty, partNumber) => {
     // Gọi API này để log vật liệu Raw Material (phụ liệu) kèm theo Part Number
@@ -92,6 +86,34 @@ export const workstationAPI = {
     getLoggedBoxes: async (wo) => {
         const response = await apiClient.get(`/packing/getLoggedBoxes/${wo}`);
         return response.data;
-    }
+    },
+
+    updateWOProgress: async (data) => {
+        try {
+            const response = await apiClient.post('/validation/updateWOprogress', data);
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    },
   
+    getAllocationStatus: async (wo) => {
+        return (await apiClient.get(`/allocation/status/${wo}`)).data;
+    },
+    generateBatches: async (payload) => {
+        return (await apiClient.post('/allocation/generate', payload)).data;
+    },
+    verifyAllocationCard: async (payload) => {
+        return (await apiClient.post('/allocation/verify_card', payload)).data;
+    },
+    verifyBulkCards: async (payload) => {
+        return (await apiClient.post('/allocation/verify_bulk', payload)).data;
+    },
+    printBatches: async (payload) => {
+        return (await apiClient.post('/allocation/print_batches', payload)).data;
+    },
+    initOutsourceAllocation: async (payload) => {
+    const response = await apiClient.post('/allocation/outsource/init', payload);
+    return response.data;
+  },
 };

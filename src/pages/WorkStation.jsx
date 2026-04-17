@@ -7,6 +7,7 @@ import WorkStationNavbar from "../components/layout/WorkstationNavbar";
 import DashboardView from "../components/dashboard/DashboardView";
 import ActiveJobView from "../components/production/ActiveJobView"
 import TraceabilityView from "../components/traceability/TraceabilityView";
+import AllocationView from "../components/production/AllocationView";
 
 const WorkStation = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -39,6 +40,7 @@ const WorkStation = () => {
           <div className="relative z-0 max-w-7xl mx-auto">
             {activeTab === 'dashboard' && <DashboardView />}
             {activeTab === 'production' && <ActiveJobView />}
+            {activeTab === 'allocation' && <AllocationView />}
             {activeTab === 'traceability' && <TraceabilityView />}
           </div>
         </div>
