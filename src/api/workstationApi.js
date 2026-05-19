@@ -6,10 +6,14 @@ export const workstationAPI = {
    * @param {string} scannedWO - Mã WO vừa quét
    * @returns {Promise<Object>} - Gói StandardResponse { success, message, data }
    */
-  validateWorkOrder: async (scannedWO, isAllocation = false) => {
-    // Truyền cờ is_allocation lên Backend qua Query Parameter
-    const response = await apiClient.get(`/validation/validate/${scannedWO}?is_allocation=${isAllocation}`);
-    return response.data; 
+  validateWorkOrder: async (wo, isAllocation = false, isRework = false) => {
+    try {
+      // Truyền thêm is_rework vào URL query
+      const response = await apiClient.get(`/validation/validate/${wo}?is_allocation=${isAllocation}&is_rework=${isRework}`);
+      return response.data;
+    } catch (error) {
+      throw error;
+    }
   },
   
   linkAssyPacking: async (assyWo, packingWo) => {
@@ -115,5 +119,17 @@ export const workstationAPI = {
     initOutsourceAllocation: async (payload) => {
     const response = await apiClient.post('/allocation/outsource/init', payload);
     return response.data;
-  },
+    },
+    deleteAllocation: async (payload) => {
+    const response = await apiClient.delete('/allocation/deleteAllocation', {data: payload});
+    return response.data;
+    },
+    getWorkCenters: async () => {
+      try {
+          const response = await apiClient.get('/validation/getWorkCenters'); // Đổi đường dẫn theo router của bạn
+          return response.data;
+      } catch (error) {
+          throw error;
+      }
+    },
 };

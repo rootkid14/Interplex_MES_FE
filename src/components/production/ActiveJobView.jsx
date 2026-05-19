@@ -1,203 +1,192 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ScanLine, AlertTriangle, MapPin, Link as LinkIcon } from 'lucide-react';
+import { ScanLine, Wrench, Factory, ArrowLeft, Newspaper, UserCog, Link as LinkIcon, X} from 'lucide-react';
+
 import BarcodeScanner from '../common/BarcodeScanner';
 import useProductionStore from '../../store/productionStore';
-import WorkOrderCard from '../dashboard/WorkOrderCard';
+import { workstationAPI } from '../../api/workstationApi';
 
+// Import các Frame
 import FrameMachiningProc from './FrameMachiningProc';
 import FrameAssemblyProc from './FrameAssemblyProc';
 import FramePackingProc from './FramePackingProc';
-import FrameBatchAllocator from './FrameBatchAllocator';
-import { workstationAPI } from '../../api/workstationApi';
+
+import WorkOrderCard from '../dashboard/WorkOrderCard';
 
 const ActiveJobView = () => {
     const { t } = useTranslation();
-    const [jobId, setJobId] = useState('');
+    const [mode, setMode] = useState('menu'); 
+    const [scannedWO, setScannedWO] = useState('');
     const [showScanner, setShowScanner] = useState(false);
     const [errorMsg, setErrorMsg] = useState('');
-    
-    // STATE CHO WCTR
-    const [wctrInput, setWctrInput] = useState('');
-    const [showWctrScanner, setShowWctrScanner] = useState(false);
-    const [isWctrConfirmed, setIsWctrConfirmed] = useState(false);
-    
+
+    // State cho việc Linkage Assy-Packing
     const [linkModal, setLinkModal] = useState({ isOpen: false, assyWo: null, packingWoInput: '' });
+    const [showLinkScanner, setShowLinkScanner] = useState(false);
 
     const currentWorkstation = useProductionStore(state => state.currentWorkstation);
     const setCurrentWorkstation = useProductionStore(state => state.setCurrentWorkstation);
-    const liveWOData = useProductionStore(state => state.getLiveActiveJob());
 
-    const sanitizeWO = (rawWo) => {
-        if (!rawWo) return '';
-        return String(rawWo).trim().replace(/^0+(?=\d)/, '');
-    };
+    const liveWOData = useProductionStore(state => 
+        state.activeJobs.find(job => job?.WO === state.currentWorkstation?.WO)
+    ) || currentWorkstation;
 
-    const processWorkOrder = async (scannedWO) => {
-        const cleanedWO = sanitizeWO(scannedWO);
+    const handleProcessScan = async (woData) => {
+        const cleanedWO = String(woData).trim().replace(/^0+(?=\d)/, '');
         if (!cleanedWO) return;
         setErrorMsg('');
-        try {
-            const result = await workstationAPI.validateWorkOrder(cleanedWO);
-            if (result.message === "NEEDS_PACKING_LINK") {
-                setLinkModal({ isOpen: true, assyWo: result.data.AssyWO, packingWoInput: '' });
-                return;
-            }
-            if (!result.success) {
-                setErrorMsg(result.message);
-                return;
-            }
-            setIsWctrConfirmed(false);
-            setWctrInput('');
-            setCurrentWorkstation(result.data);
-            setJobId('');
-        } catch (error) {
-            const backendMessage = error.response?.data?.detail || error.response?.data?.message;
-            setErrorMsg(backendMessage || "Lỗi kết nối đến máy chủ. Vui lòng kiểm tra lại mạng!");
-        }
-    };
 
-    const handleLinkPacking = async () => {
-        const cleanedPackingWo = sanitizeWO(linkModal.packingWoInput);
-        if (!cleanedPackingWo) return alert("Vui lòng nhập mã Packing WO!");
         try {
-            const res = await workstationAPI.linkAssyPacking(linkModal.assyWo, cleanedPackingWo);
-            if (res.success) {
-                alert("Đã liên kết thành công! Đang tải dữ liệu trạm...");
-                setLinkModal({ isOpen: false, assyWo: null, packingWoInput: '' });
-                processWorkOrder(linkModal.assyWo);
+            const isRework = mode === 'rework';
+            const result = await workstationAPI.validateWorkOrder(cleanedWO, false, isRework);
+            
+            // KIỂM TRA LINKAGE: Nếu Backend báo cần Link với Packing
+            if (result.success && result.message === "NEEDS_PACKING_LINK") {
+                setLinkModal({
+                    isOpen: true,
+                    assyWo: result.data.AssyWO,
+                    packingWoInput: ''
+                });
+                return;
+            }
+
+            if (result.success) {
+                setCurrentWorkstation(result.data); 
+                setScannedWO('');
             } else {
-                alert(res.message || "Lỗi khi liên kết WO!");
+                setErrorMsg(result.message);
             }
         } catch (error) {
-            alert("Lỗi kết nối máy chủ khi liên kết!");
+            setErrorMsg(error.response?.data?.detail || "Lỗi kết nối máy chủ");
         }
     };
 
-    const handleScanResult = (decodedText) => {
-        setShowScanner(false);
-        processWorkOrder(decodedText);
-    };
+    const handleLinkAssyPacking = async () => {
+        const packingWo = linkModal.packingWoInput.trim().replace(/^0+(?=\d)/, '');
+        if (!packingWo) return;
 
-    const submitWctr = async (wctrValue) => {
-        const finalWctr = wctrValue.trim();
-        if (!finalWctr) return;
         try {
-            const result = await workstationAPI.setWctr(currentWorkstation.WO, finalWctr);
-            if (!result.success) {
+            const result = await workstationAPI.linkAssyPacking(linkModal.assyWo, packingWo);
+            if (result.success) {
+                setLinkModal({ isOpen: false, assyWo: null, packingWoInput: '' });
+                // Sau khi link xong, quét lại WO Assembly để vào trạm
+                handleProcessScan(linkModal.assyWo);
+            } else {
                 alert(result.message);
-                return;
             }
-            setCurrentWorkstation({ ...currentWorkstation, WCtr: finalWctr });
-            setIsWctrConfirmed(true);
         } catch (error) {
-            alert("Lỗi khi cập nhật Work Center!");
+            alert("Lỗi khi thực hiện liên kết!");
         }
     };
 
     if (currentWorkstation) {
-        const { type, Type, QTY_Processed, Status, AliasWO } = currentWorkstation;
-        const rawType = type || Type || '';
-        const finalType = rawType ? rawType.trim().charAt(0).toUpperCase() + rawType.trim().slice(1).toLowerCase() : 'Unknown';
-        const needsWctr = QTY_Processed === 0 && !isWctrConfirmed;
-
+        const wcType = currentWorkstation.WC_Type; 
         return (
-            <div className="flex flex-col gap-6 animate-fade-in-up relative">
-                {liveWOData && (
-                    <div className="max-w-6xl mx-auto w-full">
-                        <WorkOrderCard data={liveWOData} aliasWO={AliasWO} />
+            <div className="h-full bg-slate-900 overflow-hidden flex flex-col relative z-0">
+                
+                {liveWOData && liveWOData.WO && (
+                    <div className="p-4 shrink-0 bg-slate-900 border-b border-slate-800 z-10 shadow-md">
+                        <WorkOrderCard data={liveWOData} aliasWO={liveWOData.AliasWO} />
                     </div>
                 )}
-                
-                {finalType === 'Machining' && <FrameMachiningProc />}
-                {finalType === 'Assembly' && <FrameAssemblyProc />}
-                {finalType === 'Packing' && <FramePackingProc />}
-                
-                {!['Machining', 'Assembly', 'Packing', ].includes(finalType) && (
-                    <div className="p-8 text-red-400 font-bold text-center border border-red-500/30 rounded-xl bg-red-500/10">
-                        Lỗi: Trạm "{finalType}" hiện chưa được hỗ trợ giao diện thao tác!
-                    </div>
-                )}
-
-                {needsWctr && (
-                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm">
-                        {/* WCTR CAMERA OVERLAY */}
-                        {showWctrScanner && (
-                            <BarcodeScanner 
-                                onScanSuccess={(text) => { setWctrInput(text); setShowWctrScanner(false); }} 
-                                onClose={() => setShowWctrScanner(false)} 
-                            />
-                        )}
-                        <div className="bg-slate-800 p-6 sm:p-8 rounded-2xl border border-slate-600 shadow-2xl w-full max-w-md flex flex-col animate-fade-in-up">
-                            <div className="flex items-center gap-3 mb-2">
-                                <MapPin className="text-blue-400" size={28}/>
-                                <h2 className="text-2xl font-bold text-white">Đăng ký Máy / Chuyền</h2>
-                            </div>
-                            <p className="text-slate-400 mb-6 text-sm">Vui lòng quét hoặc nhập mã Work Center (WCtr) để tiếp tục.</p>
                             
-                            <div className="flex flex-col gap-4">
-                                <div className="flex items-center gap-2">
-                                    <input 
-                                        type="text" 
-                                        autoFocus 
-                                        value={wctrInput} 
-                                        onChange={(e) => setWctrInput(e.target.value)} 
-                                        onKeyDown={(e) => e.key === 'Enter' && submitWctr(wctrInput)}
-                                        placeholder="Ví dụ: LINE-01" 
-                                        className="flex-1 bg-slate-900 border border-blue-500/50 text-white px-4 py-3 rounded-lg focus:ring-2 outline-none font-mono text-center text-lg w-full" 
-                                    />
-                                    <button 
-                                        onClick={() => setShowWctrScanner(true)} 
-                                        className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-3 rounded-lg font-bold shadow-lg"
-                                        title="Mở Camera"
-                                    >
-                                        <ScanLine size={24}/>
-                                    </button>
-                                </div>
-                                <button onClick={() => submitWctr(wctrInput)} className="w-full bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-lg font-bold shadow-lg mt-2">
-                                    XÁC NHẬN
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                )}
+                {/* Khu vực Frame làm việc (cho phép cuộn độc lập nếu cần) */}
+                <div className="flex-1 overflow-hidden relative">
+                    {wcType === 'Machining' && <FrameMachiningProc />}
+                    {wcType === 'Assembly' && <FrameAssemblyProc />}
+                    {wcType === 'Packing' && <FramePackingProc />}
+                </div>
+
             </div>
         );
     }
 
     return (
-        <div className="flex flex-col h-full items-center justify-center animate-fade-in-up p-4 sm:p-8">
-            {showScanner && <BarcodeScanner onScanSuccess={handleScanResult} onClose={() => setShowScanner(false)} />}
-            
-            {linkModal.isOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm">
-                    <div className="bg-slate-800 p-6 sm:p-8 rounded-2xl border border-emerald-500/50 shadow-2xl w-full max-w-md flex flex-col animate-fade-in-up">
-                        <div className="flex items-center justify-center gap-3 mb-4">
-                            <LinkIcon className="text-emerald-400" size={32}/>
-                            <h2 className="text-2xl font-bold text-white">Yêu cầu Liên Kết</h2>
+        <div className="h-full bg-slate-900 p-6 flex flex-col items-center justify-center relative z-0">
+            {mode !== 'menu' && (
+                <button onClick={() => {setMode('menu'); setErrorMsg(''); setScannedWO('');}} className="absolute top-6 left-6 flex items-center gap-2 text-slate-400 hover:text-white font-bold bg-slate-800/50 px-4 py-2 rounded-lg">
+                    <ArrowLeft size={20}/> QUAY LẠI
+                </button>
+            )}
+
+            <div className="flex-1 flex flex-col items-center justify-center max-w-4xl mx-auto w-full py-10">
+                {/* ... (Phần UI Menu Sản xuất/Rework giữ nguyên như bản trước) ... */}
+                <div className="bg-slate-800 p-4 rounded-full mb-6 shadow-lg">
+                    <UserCog className={mode === 'rework' ? 'text-purple-500' : 'text-blue-500'} size={36} />
+                </div>
+                <h1 className="text-2xl sm:text-2xl font-black text-white mb-2 tracking-wide text-center uppercase">MÔI TRƯỜNG SẢN XUẤT</h1>
+                <p className="text-slate-400 text-center">Quản lý chít mã trong quá trình sản xuất</p>
+                
+                {mode === 'menu' ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full mt-10">
+                         <button onClick={() => setMode('production')} className="group flex flex-col items-center justify-center bg-slate-800/80 hover:bg-blue-600/20 border-2 border-slate-700 hover:border-blue-500 p-10 rounded-[2rem] transition-all">
+                            <Newspaper className="text-blue-500 group-hover:scale-110 mb-6" size={72}/>
+                            <h2 className="text-2xl font-black text-white mb-3">SẢN XUẤT MỚI (STANDARD)</h2>
+                            <p className="text-slate-400 text-center">Sản xuất một lô hàng mới</p>
+                        </button>
+                        <button onClick={() => setMode('rework')} className="group flex flex-col items-center justify-center bg-slate-800/80 hover:bg-purple-600/20 border-2 border-slate-700 hover:border-purple-500 p-10 rounded-[2rem] transition-all">
+                            <Wrench className="text-purple-500 group-hover:scale-110 mb-6" size={72}/>
+                            <h2 className="text-2xl font-black text-white mb-3">LÀM LẠI (REWORK)</h2>
+                            <p className="text-slate-400 text-center">Xử lý hoặc sửa lại một lô hàng lỗi</p>
+                        </button>
+                    </div>
+                ) : (
+                    <div className="w-full max-w-xl mt-10">
+                         <div className={`border p-4 rounded-xl mb-8 text-center font-bold flex items-center justify-center gap-2 ${mode === 'production' ? 'bg-blue-500/10 border-blue-500/30 text-blue-400' : 'bg-purple-500/10 border-purple-500/30 text-purple-400'}`}>
+                            {mode === 'production' ? <Factory size={20}/> : <Wrench size={20}/>} 
+                            CHẾ ĐỘ: {mode === 'production' ? 'SẢN XUẤT TIÊU CHUẨN' : 'REWORK (SỬA HÀNG LỖI)'}
                         </div>
-                        <p className="text-slate-400 mb-6 text-sm text-center">Lệnh Assembly <b>{linkModal.assyWo}</b> cần được liên kết với một Lệnh Packing. Vui lòng quét mã WO của Packing để tiếp tục.</p>
-                        <input type="text" autoFocus value={linkModal.packingWoInput} onChange={(e) => setLinkModal({...linkModal, packingWoInput: e.target.value})} onKeyDown={(e) => e.key === 'Enter' && handleLinkPacking()} placeholder="Quét mã WO Packing..." className="bg-slate-900 border border-emerald-500/50 text-white px-4 py-4 rounded-xl focus:ring-2 outline-none font-mono text-center text-lg mb-4" />
-                        <div className="flex gap-3">
-                            <button onClick={() => setLinkModal({isOpen: false, assyWo: null, packingWoInput: ''})} className="flex-1 bg-slate-700 text-white py-3 rounded-lg font-bold">HỦY</button>
-                            <button onClick={handleLinkPacking} className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-3 rounded-lg font-bold shadow-lg">LIÊN KẾT</button>
+                        <div className="flex flex-col sm:flex-row gap-4">
+                            <input 
+                                type="text" value={scannedWO} 
+                                onChange={(e) => setScannedWO(e.target.value)} 
+                                onKeyDown={(e) => e.key === 'Enter' && handleProcessScan(scannedWO)}
+                                placeholder="Quét hoặc nhập mã WO..." 
+                                className="flex-1 bg-slate-900 border border-slate-600 text-white px-5 py-4 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none text-xl font-mono text-center sm:text-left transition-all" 
+                            />
+                            <button onClick={() => setShowScanner(true)} className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-4 rounded-2xl font-black flex justify-center items-center gap-2 shadow-lg shadow-blue-900/30 active:scale-95 transition-all">
+                            <ScanLine size={24} /> QUÉT MÃ
+                            </button>
+                        </div>
+                        
+                    </div>
+                )}
+
+                {errorMsg && <p className="mt-6 text-red-400 font-bold bg-red-500/10 p-4 rounded-xl border border-red-500/30">{errorMsg}</p>}
+            </div>
+
+            {/* MODAL LINKAGE ASSY-PACKING (PHỤC HỒI) */}
+            {linkModal.isOpen && (
+                <div className="fixed inset-0 z-[100] bg-slate-900/95 backdrop-blur-md flex items-center justify-center p-4">
+                    <div className="bg-slate-800 border-2 border-blue-500 rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden animate-fade-in-up">
+                        <div className="bg-blue-600 p-6 flex justify-between items-center text-white">
+                            <h3 className="text-xl font-black flex items-center gap-3 uppercase tracking-tighter">
+                                <LinkIcon size={24} /> Yêu cầu liên kết WO Packing
+                            </h3>
+                            <button onClick={() => setLinkModal({ isOpen: false, assyWo: null, packingWoInput: '' })} className="hover:rotate-90 transition-transform"><X /></button>
+                        </div>
+                        <div className="p-8">
+                            <p className="text-slate-300 mb-6">WO Assembly <b className="text-blue-400 font-mono text-lg">{linkModal.assyWo}</b> chưa có thông tin đóng gói. Vui lòng quét mã WO Packing tương ứng.</p>
+                            <div className="flex gap-3 mb-6">
+                                <input 
+                                    type="text" value={linkModal.packingWoInput}
+                                    onChange={(e) => setLinkModal({ ...linkModal, packingWoInput: e.target.value })}
+                                    onKeyDown={(e) => e.key === 'Enter' && handleLinkAssyPacking()}
+                                    placeholder="Quét WO Packing..."
+                                    className="flex-1 bg-slate-900 border border-slate-600 text-white px-4 py-4 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-mono text-xl"
+                                />
+                                <button onClick={() => setShowLinkScanner(true)} className="bg-slate-700 text-white px-4 rounded-xl hover:bg-slate-600"><ScanLine /></button>
+                            </div>
+                            <button onClick={handleLinkAssyPacking} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black py-4 rounded-xl text-lg shadow-lg shadow-blue-900/50">XÁC NHẬN LIÊN KẾT</button>
                         </div>
                     </div>
                 </div>
             )}
 
-            <div className="bg-slate-800 p-6 sm:p-10 rounded-2xl border border-slate-700 shadow-2xl w-full max-w-2xl flex flex-col items-center">
-                <h1 className="text-3xl font-black text-white mb-2 tracking-wide text-center">{t('workstationFrame.workstationlogin')}</h1>
-                <p className="text-slate-400 mb-8 text-center">{t('workstationFrame.workstationloginprompt')}</p>
-                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full">
-                    <input type="text" value={jobId} onChange={(e) => setJobId(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && processWorkOrder(jobId)} autoFocus placeholder={t('workstationFrame.woinputexample')} className="flex-1 bg-slate-900 border border-slate-600 text-white px-4 py-4 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none w-full text-lg shadow-inner font-mono" />
-                    <button onClick={() => setShowScanner(true)} className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-4 rounded-xl font-bold text-lg flex justify-center items-center gap-2"><ScanLine size={24} /> QUÉT MÃ</button>
-                </div>
-                {errorMsg && (
-                    <div className="mt-6 w-full bg-red-500/10 border border-red-500/30 p-4 rounded-lg text-red-400 animate-pulse"><p className="font-semibold text-sm text-center">{errorMsg}</p></div>
-                )}
-            </div>
+            {showScanner && <BarcodeScanner onScan={(data) => { setShowScanner(false); handleProcessScan(data); }} onClose={() => setShowScanner(false)} />}
+            {showLinkScanner && <BarcodeScanner onScan={(data) => { setShowLinkScanner(false); setLinkModal({ ...linkModal, packingWoInput: data }); }} onClose={() => setShowLinkScanner(false)} />}
         </div>
     );
 };
+
 export default ActiveJobView;

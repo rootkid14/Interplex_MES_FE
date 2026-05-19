@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { ActionButton } from "../common/ActionButton";
-import { ScanLine, XCircle, CheckCircle, Package, Box, Printer, FilePlus, CheckSquare, Square, X, CheckCheck, Cpu, MousePointerClick, RefreshCcw } from "lucide-react";
+import { ScanLine, XCircle, CheckCircle, Package, Box, Printer, FilePlus, CheckSquare, Square, X, CheckCheck, Cpu, MousePointerClick, RefreshCcw, Trash2 } from "lucide-react";
 import useProductionStore from '../../store/productionStore';
 import { workstationAPI } from '../../api/workstationApi';
 
@@ -8,11 +8,11 @@ const FrameBatchAllocator = () => {
     // ==========================================
     // 1. STATE & STORE
     // ==========================================
-    const currentWorkstation = useProductionStore(state => state.currentWorkstation);
-    const clearCurrentWorkstation = useProductionStore(state => state.clearCurrentWorkstation);
-    const liveWOData = useProductionStore(state => state.activeJobs.find(job => job.WO === state.currentWorkstation?.WO));
+    const currentAllocation = useProductionStore(state => state.currentAllocation);
+    const clearCurrentAllocation = useProductionStore(state => state.clearCurrentAllocation);
+    const liveWOData = useProductionStore(state => state.activeJobs.find(job => job.WO === state.currentAllocation?.WO));
     
-    const woData = currentWorkstation;
+    const woData = currentAllocation;
 
     const [cards, setCards] = useState([]); 
     const [config, setConfig] = useState({ pn: '', maxQty: '' });
@@ -40,11 +40,15 @@ const FrameBatchAllocator = () => {
                 const firstCard = res.data[0];
                 setConfig({ pn: firstCard.pn, maxQty: firstCard.qty });
             }
+            else{
+                const autoPn = woData?.ModelNO || '';
+                setConfig(prev => ({ ...prev, pn: autoPn }));
+            }
         }
         setLoading(false);
     };
 
-    useEffect(() => { loadStatus(); }, [wo]);
+    useEffect(() => { loadStatus(); console.log("Data", woData)}, [wo]);
 
     // ==========================================
     // 3. TÍNH TOÁN TIẾN ĐỘ CHUẨN XÁC
@@ -56,9 +60,7 @@ const FrameBatchAllocator = () => {
     const isConfigLocked = cards.length > 0; 
     const maxQtyNum = parseInt(config.maxQty) || 0;
 
-    const canGenerate = isWOInProgress 
-        ? (remainingToAllocate >= maxQtyNum && maxQtyNum > 0)
-        : (remainingToAllocate > 0 && maxQtyNum > 0);
+    const canGenerate = remainingToAllocate > 0 && maxQtyNum > 0;
 
     // ==========================================
     // 4. HÀM GỌI API (WORKFLOW NEW)
@@ -66,9 +68,9 @@ const FrameBatchAllocator = () => {
     const handleGenerate = async () => {
         if (!config.pn || !maxQtyNum) return alert("Vui lòng nhập Part Number và Max QTY!");
         
-        if (isWOInProgress && remainingToAllocate < maxQtyNum) {
-            return alert(`WO đang chạy. Bạn còn ${remainingToAllocate} chiếc, chưa đủ để chốt 1 lô (${maxQtyNum})!`);
-        }
+        // if (isWOInProgress && remainingToAllocate < maxQtyNum) {
+        //     return alert(`WO đang chạy. Bạn còn ${remainingToAllocate} chiếc, chưa đủ để chốt 1 lô (${maxQtyNum})!`);
+        // }
 
         const res = await workstationAPI.generateBatches({ WO: wo, PN: config.pn, MaxQTY: maxQtyNum });
         if (res.success) {
@@ -138,7 +140,16 @@ const FrameBatchAllocator = () => {
         if (selectedForPrint.length === 0) return alert("Vui lòng chọn ít nhất 1 thẻ để in!");
         
         try {
-            const fileContent = selectedForPrint.join('\n');
+            // Sửa logic tạo fileContent ở đây
+            const fileContent = selectedForPrint.map(barcode => {
+                // Tìm thẻ tương ứng trong mảng cards để lấy qty
+                const targetCard = cards.find(c => c.barcode === barcode);
+                const qty = targetCard ? targetCard.qty : 0;
+                
+                // Trả về chuỗi có chứa qty (Bạn có thể đổi dấu phẩy thành dấu tab \t hoặc ký tự khác tùy form máy in)
+                return `${barcode},${wo},${qty}`; 
+            }).join('\n');
+
             const blob = new Blob([fileContent], { type: 'text/plain' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -163,12 +174,28 @@ const FrameBatchAllocator = () => {
         }
     };
 
-    if (!currentWorkstation) return null;
+    if (!currentAllocation) return null;
 
     const isPrintModeActive = printMode !== 'none';
 
     // ĐẢO NGƯỢC MẢNG ĐỂ HIỂN THỊ THẺ MỚI NHẤT LÊN TRÊN CÙNG
     const displayCards = [...cards].reverse(); 
+
+    const handleDeleteCard = async (barcodeToDelete) => {
+        if (!window.confirm("Bạn có chắc chắn muốn xóa mã cấp phát này?")) return;
+        
+        try {
+            const payload = {"barcode" : barcodeToDelete};
+            const res = await workstationAPI.deleteAllocation(payload);
+            if (res.success) {
+                setCards(prev => prev.filter(c => c.barcode !== barcodeToDelete));
+            } else {
+                alert(res.message);
+            }
+        } catch (err) {
+            alert("Lỗi khi xóa: " + err.message);
+        }
+    };
 
     return (
         <div className="flex flex-col h-full bg-slate-900 border-l border-slate-700 animate-fade-in relative z-10">
@@ -197,7 +224,7 @@ const FrameBatchAllocator = () => {
                         </div>
                     </div>
                     {!isPrintModeActive && (
-                        <ActionButton icon={<XCircle size={24} />} label="Đóng" color="red" onClick={clearCurrentWorkstation} />
+                        <ActionButton icon={<XCircle size={24} />} label="Đóng" color="red" onClick={clearCurrentAllocation} />
                     )}
                 </div>
 
@@ -223,17 +250,16 @@ const FrameBatchAllocator = () => {
                             <input 
                                 type="text" disabled={isConfigLocked || isPrintModeActive} value={config.pn} 
                                 onChange={(e) => setConfig({...config, pn: e.target.value.toUpperCase()})}
-                                placeholder="Nhập PN của tem..."
                                 className={`w-full bg-slate-900 border border-slate-600 text-white px-4 py-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all ${(isConfigLocked || isPrintModeActive) ? 'opacity-50 cursor-not-allowed' : ''}`}
                             />
                         </div>
                         <div className="sm:col-span-3">
                             <label className="text-xs text-slate-400 font-bold uppercase mb-1.5 block ml-1">Max QTY/Batch</label>
                             <input 
-                                type="number" disabled={isConfigLocked || isPrintModeActive} value={config.maxQty} 
+                                type="number" disabled={isPrintModeActive} value={config.maxQty} 
                                 onChange={(e) => setConfig({...config, maxQty: e.target.value})}
-                                placeholder="VD: 50"
-                                className={`w-full bg-slate-900 border border-slate-600 text-white px-4 py-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-center font-mono text-lg transition-all ${(isConfigLocked || isPrintModeActive) ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                placeholder="Nhập số sp/lô...."
+                                className={`w-full bg-slate-900 border border-slate-600 text-white px-4 py-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-center font-mono text-lg transition-all`}
                             />
                         </div>
                         <div className="sm:col-span-2">
@@ -325,10 +351,14 @@ const FrameBatchAllocator = () => {
                                     {/* Hàng 2: QTY + Nút Action */}
                                     <div className="flex justify-between items-center pt-2.5 border-t border-slate-700/50">
                                         <span className="text-xs text-slate-500 uppercase font-bold">QTY: <b className={`text-sm ${isSelected ? 'text-emerald-400' : 'text-emerald-500/70'}`}>{card.qty}</b></span>
-                                        
                                         {!isPrintModeActive && card.state === 'Wait-Verify' && (
                                             <button onClick={(e) => { e.stopPropagation(); handleVerify(card.barcode, card.qty); }} className="text-[11px] bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded font-bold flex items-center gap-1 transition-colors shadow">
                                                 <CheckCircle size={14}/> DUYỆT
+                                            </button>
+                                        )}
+                                        {!isPrintModeActive && card.state === 'Wait-Verify' && (
+                                            <button onClick={() => handleDeleteCard(card.barcode)} className="text-[11px] bg-red-600 hover:bg-red-500 text-white px-3 py-1 rounded font-bold flex items-center gap-1 transition-colors shadow">
+                                                <Trash2 size={14}/> XÓA
                                             </button>
                                         )}
                                     </div>

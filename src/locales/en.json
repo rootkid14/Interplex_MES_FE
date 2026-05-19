@@ -36,7 +36,7 @@
     "pending": "Warning",
     "wo": "Work Order",
     "modelNO": "Model Number",
-    "WCTR": "Work Center",
+    "WCTR": "Line/ Machine",
     "progress": "Progress",
     "processed": "Processed",
     "okqty": "QTY OK",

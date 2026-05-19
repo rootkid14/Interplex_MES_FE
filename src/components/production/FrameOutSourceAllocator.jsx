@@ -3,14 +3,16 @@ import { ActionButton } from "../common/ActionButton";
 import { Truck, XCircle, CheckCircle, Package, Box, Printer, FilePlus, CheckSquare, Square, X, CheckCheck, Cpu, MousePointerClick, RefreshCcw } from "lucide-react";
 import useProductionStore from '../../store/productionStore';
 import { workstationAPI } from '../../api/workstationApi';
+import { modelConfigAPI } from "../../api/modelconfigApi";
 
 const FrameOutSourceAllocator = () => {
     // ==========================================
     // 1. STATE & STORE
     // ==========================================
-    const currentWorkstation = useProductionStore(state => state.currentWorkstation);
-    const clearCurrentWorkstation = useProductionStore(state => state.clearCurrentWorkstation);
-    const woData = currentWorkstation;
+    const currentAllocation = useProductionStore(state => state.currentAllocation);
+    const clearCurrentAllocation = useProductionStore(state => state.clearCurrentAllocation);
+    const liveWOData = useProductionStore(state => state.activeJobs.find(job => job.WO === state.currentAllocation?.WO));
+    const woData = currentAllocation;
 
     const [cards, setCards] = useState([]); 
     const [config, setConfig] = useState({ pn: '', maxQty: '' });
@@ -27,6 +29,8 @@ const FrameOutSourceAllocator = () => {
     // 2. DATA FETCHING
     // ==========================================
     const loadStatus = async () => {
+        console.log(woData)
+        console.log(liveWOData)
         if (!wo) return;
         setLoading(true);
         const res = await workstationAPI.getAllocationStatus(wo);
@@ -35,6 +39,11 @@ const FrameOutSourceAllocator = () => {
             if (res.data.length > 0) {
                 const firstCard = res.data[0];
                 setConfig({ pn: firstCard.pn, maxQty: firstCard.qty });
+            }
+            else
+            {
+                const autoPn = woData?.rules?.outSourcePN || '';
+                setConfig(prev => ({ ...prev, pn: autoPn }));
             }
         }
         setLoading(false);
@@ -130,7 +139,15 @@ const FrameOutSourceAllocator = () => {
         if (selectedForPrint.length === 0) return alert("Vui lòng chọn ít nhất 1 thẻ để in!");
         
         try {
-            const fileContent = selectedForPrint.join('\n');
+            // Sửa logic tạo fileContent ở đây
+            const fileContent = selectedForPrint.map(barcode => {
+                // Tìm thẻ tương ứng trong mảng cards để lấy qty
+                const targetCard = cards.find(c => c.barcode === barcode);
+                const qty = targetCard ? targetCard.qty : 0;
+                
+                // Trả về chuỗi có chứa qty (Bạn có thể đổi dấu phẩy thành dấu tab \t hoặc ký tự khác tùy form máy in)
+                return `${barcode},OS${wo},${qty}`; 
+            }).join('\n');
             const blob = new Blob([fileContent], { type: 'text/plain' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -155,7 +172,7 @@ const FrameOutSourceAllocator = () => {
         }
     };
 
-    if (!currentWorkstation) return null;
+    if (!currentAllocation) return null;
 
     const isPrintModeActive = printMode !== 'none';
     const displayCards = [...cards].reverse(); 
@@ -187,7 +204,7 @@ const FrameOutSourceAllocator = () => {
                         </div>
                     </div>
                     {!isPrintModeActive && (
-                        <ActionButton icon={<XCircle size={24} />} label="Thoát" color="red" onClick={clearCurrentWorkstation} />
+                        <ActionButton icon={<XCircle size={24} />} label="Thoát" color="red" onClick={clearCurrentAllocation} />
                     )}
                 </div>
 
@@ -219,9 +236,10 @@ const FrameOutSourceAllocator = () => {
                         <div className="flex-1">
                             <label className="text-xs text-slate-500 font-black uppercase mb-2 block ml-2">QTY/Lô</label>
                             <input 
-                                type="number" disabled={isConfigLocked || isPrintModeActive} value={config.maxQty} 
+                                type="number" disabled={isPrintModeActive} value={config.maxQty} 
                                 onChange={(e) => setConfig({...config, maxQty: e.target.value})}
-                                className={`w-full bg-slate-900 border-2 border-slate-700 text-white px-5 py-3.5 rounded-2xl text-center font-black text-xl ${(isConfigLocked || isPrintModeActive) ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                placeholder="Nhập số sp/lô...."
+                                className={`w-full bg-slate-900 border-2 border-slate-700 text-white px-5 py-3.5 rounded-2xl text-center font-black text-xl `}
                             />
                         </div>
                         <button 

@@ -251,6 +251,21 @@ const ConfigTable = ({ modelData, onClose, onSave }) => {
             </>
           )}
 
+            {/* Mã sau outsource */}
+            <div className="p-4 bg-yellow-900/20 border border-yellow-500/30 rounded-lg mt-4 shadow-inner">
+              <h4 className="text-yellow-400 font-bold mb-3 border-b border-yellow-500/30 pb-2">🚚 Link With OutSource PN</h4>
+              <div>
+                <label className="text-xs text-slate-400">OutSource Part Number</label>
+                <input 
+                  type="text" 
+                  value={localJson.outSourcePN || ''} 
+                  onChange={e => setLocalJson(prev => ({ ...prev, outSourcePN: e.target.value.toUpperCase() }))} 
+                  placeholder="VD: The PN that this one will become after OutSourcing"
+                  className="w-full bg-slate-700 text-white px-3 py-2 rounded mt-1 outline-none focus:border-yellow-500 border border-slate-600 text-yellow-100" 
+                />
+              </div>
+            </div>
+
           {/* BLOCK: MAIN INPUTS (Thay thế cho InputMain cũ) */}
           <div className="p-4 bg-blue-900/20 border border-blue-500/30 rounded-lg mt-4 shadow-inner">
             <h4 className="text-blue-400 font-bold mb-3 border-b border-blue-500/30 pb-2">🔵 Main Inputs</h4>

@@ -31,3 +31,14 @@ export const MESSAGE_TYPE = {
   WARNING: 3,
   SYSTEM_INFO: 4
 };
+
+
+export const STATION_MAPPING = {
+    "Stamping": "Dập",
+    "CNC": "CNC",
+    "Cleaning": "Làm sạch",
+    "Powder Coating": "Sơn",
+    "Plating": "Mạ",
+    "Assembly": "Lắp ráp",
+    "Welding": "Hàn"
+};

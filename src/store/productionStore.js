@@ -9,8 +9,7 @@ const useProductionStore = create((set, get) => ({
   activeJobs: [],
   systemMessages: [],
 
-  // 3. STATE CỦA TRẠM LÀM VIỆC (WORKSTATION)
-  currentWorkstation: null, // Sẽ chứa: { WO, ModelNO, PlanQTY, rules: {...} }
+  
 
   // ==========================================
   // CÁC HÀM ACTIONS CẬP NHẬT STATE
@@ -18,8 +17,14 @@ const useProductionStore = create((set, get) => ({
   setActiveJobs: (jobs) => set({ activeJobs: jobs }),
   setSystemMessages: (messages) => set({ systemMessages: messages }),
   
+  // STATE CỦA TRẠM LÀM VIỆC (WORKSTATION)
+  currentWorkstation: null, // Sẽ chứa: { WO, ModelNO, PlanQTY, rules: {...} }
   setCurrentWorkstation: (data) => set({ currentWorkstation: data }),
   clearCurrentWorkstation: () => set({ currentWorkstation: null }),
+
+  currentAllocation: null,
+  setCurrentAllocation: (data) => set({ currentAllocation: data }),
+  clearCurrentAllocation: () => set({ currentAllocation: null }),
 
   // Tiện ích bổ sung: Lấy dữ liệu LIVE của WO đang làm việc
   getLiveActiveJob: () => {

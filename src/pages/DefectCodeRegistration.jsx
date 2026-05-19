@@ -4,6 +4,7 @@ import Sidebar from "../components/layout/Sidebar";
 import TopSystemBar from "../components/layout/TopSystemBar";
 import { ActionButton } from "../components/common/ActionButton";
 import { defectCodeAPI } from "../api/defectCodeApi";
+import { STATION_MAPPING } from "../components/common/Constants";
 
 const DefectCodeRegistration = () => {
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -34,13 +35,13 @@ const DefectCodeRegistration = () => {
     const uniqueStations = Array.from(new Set(codes.map(c => c.Station))).filter(s => s);
 
     const handleOpenModal = (mode, data = null) => {
-        if (mode === 'edit' && data) {
-            setFormData({ code: data.Code, station: data.Station, englishName: data.EnglishName, vietnameseName: data.VietnameseName });
-        } else {
-            setFormData({ code: '', station: 'All', englishName: '', vietnameseName: '' });
-        }
-        setModal({ isOpen: true, mode, data });
-    };
+            if (mode === 'edit' && data) {
+                setFormData({ code: data.Code, station: data.Station, englishName: data.EnglishName, vietnameseName: data.VietnameseName });
+            } else {
+                setFormData({ code: '', station: '', englishName: '', vietnameseName: '' }); // <--- Sửa ở đây
+            }
+            setModal({ isOpen: true, mode, data });
+        };
 
     const handleSave = async () => {
         if (!formData.code || !formData.station || !formData.englishName || !formData.vietnameseName) {
@@ -110,7 +111,11 @@ const DefectCodeRegistration = () => {
                                 <LayoutGrid className="absolute left-3 top-3 text-slate-500" size={18}/>
                                 <select value={filterStation} onChange={(e) => setFilterStation(e.target.value)} className="w-full bg-slate-900/50 border border-slate-600 text-white pl-10 pr-4 py-2.5 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none appearance-none cursor-pointer">
                                     <option value="All">Tất cả Trạm</option>
-                                    {uniqueStations.map(st => <option key={st} value={st}>Trạm: {st}</option>)}
+                                    {uniqueStations.map(st => (
+                                        <option key={st} value={st}>
+                                            Trạm: {STATION_MAPPING[st] ? `${STATION_MAPPING[st]} (${st})` : st}
+                                        </option>
+                                    ))}
                                 </select>
                             </div>
                         </div>
@@ -168,11 +173,22 @@ const DefectCodeRegistration = () => {
                                 <div className="space-y-5 mb-8">
                                     <div>
                                         <label className="block text-slate-500 text-xs font-black uppercase mb-1.5 ml-1">Mã Lỗi (Code) *</label>
-                                        <input type="text" value={formData.code} onChange={e => setFormData({...formData, code: e.target.value.toUpperCase()})} placeholder="VD: SCRATCH, 3510..." className="w-full bg-slate-900 border border-slate-700 text-white px-4 py-3 rounded-xl outline-none focus:border-blue-500 font-mono" />
+                                        <input type="text" value={formData.code} onChange={e => setFormData({...formData, code: e.target.value.toUpperCase()})} placeholder="VD: 3510..." className="w-full bg-slate-900 border border-slate-700 text-white px-4 py-3 rounded-xl outline-none focus:border-blue-500 font-mono" />
                                     </div>
                                     <div>
                                         <label className="block text-slate-500 text-xs font-black uppercase mb-1.5 ml-1">Trạm Chịu Trách Nhiệm (Station) *</label>
-                                        <input type="text" value={formData.station} onChange={e => setFormData({...formData, station: e.target.value})} placeholder="VD: Machining, Painting, All..." className="w-full bg-slate-900 border border-slate-700 text-white px-4 py-3 rounded-xl outline-none focus:border-blue-500" />
+                                        <select 
+                                            value={formData.station} 
+                                            onChange={e => setFormData({...formData, station: e.target.value})} 
+                                            className="w-full bg-slate-900 border border-slate-700 text-white px-4 py-3 rounded-xl outline-none focus:border-blue-500 appearance-none cursor-pointer"
+                                        >
+                                            <option value="" disabled>-- Chọn Trạm (Select Station) --</option>
+                                            {Object.entries(STATION_MAPPING).map(([eng, vie]) => (
+                                                <option key={eng} value={eng}>
+                                                    {vie} ({eng})
+                                                </option>
+                                            ))}
+                                        </select>
                                     </div>
                                     <div className="grid grid-cols-1 gap-5">
                                         <div>

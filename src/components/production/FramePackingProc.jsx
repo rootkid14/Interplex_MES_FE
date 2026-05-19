@@ -1,12 +1,14 @@
 import React, { useState, useRef, useEffect } from "react";
 import BarcodeScanner from '../common/BarcodeScanner';
-import { ScanLine, XCircle, AlertTriangle, PackagePlus, MonitorDot, Box, Camera, CheckCircle, Trash2 } from "lucide-react";
+import { ScanLine, XCircle, AlertTriangle, PackagePlus, MonitorDot, Box, Camera, CheckCircle, Trash2, LinkIcon, MapPin } from "lucide-react";
 import { useTranslation } from 'react-i18next';
 import { ActionButton } from "../common/ActionButton";
 import { BoxContentExpandable } from "../common/BoxContentExpandable";
 import useProductionStore from '../../store/productionStore';
 import { workstationAPI } from '../../api/workstationApi';
 import { MESSAGE_TYPE, WO_STATUS } from '../common/Constants';
+import DefectReportModal from "../common/DefectReportModals";
+import WctrSelectionModal from "../common/WctrSelectionModal";
 
 const FramePackingProc = () => {
     const { t } = useTranslation();
@@ -36,44 +38,191 @@ const FramePackingProc = () => {
     
     const [showBoxScanner, setShowBoxScanner] = useState(false);
     const [showItemScanner, setShowItemScanner] = useState(false);
+
+    const [qtyWarningModal, setQtyWarningModal] = useState({ isOpen: false, boxId: null, message: '' });
     
-    const [ngModal, setNgModal] = useState({ isOpen: false, pn: availablePNs[0] || '', desc: '', qty: '' });
+    const [isNgModalOpen, setIsNgModalOpen] = useState(false);
     const [skipModal, setSkipModal] = useState({ isOpen: false, boxId: '', reason: '' });
     const [doneModal, setDoneModal] = useState({ isOpen: false, scannedWo: '', error: '' });
     const [showDoneScanner, setShowDoneScanner] = useState(false);
 
-    // FETCH LỊCH SỬ ĐÓNG GÓI TỪ DB 
-    useEffect(() => {
-        const fetchHistory = async () => {
-            if (!woData?.WO) return;
+    const [wctrModalOpen, setWctrModalOpen] = useState(false);
+    const [isSubmittingWctr, setIsSubmittingWctr] = useState(false);
+
+    const [inputHistory, setInputHistory] = useState({ main: [], raw: [] });
+
+
+    const fetchAliasRules = async () => {
+        // Chỉ gọi nếu AliasWO tồn tại và khác null (sau khi đã fix BE)
+        if (woData?.AliasWO) {
             try {
-                const result = await workstationAPI.getLoggedBoxes(woData.WO);
-                if (result.success && result.data) {
-                    setBoxes(result.data); // result.data đã được map đúng format ở backend
+                // Gọi API validate với mã Alias
+                const response = await workstationAPI.validateWorkOrder(woData.AliasWO);
+                
+                if (response.success && response.data.rules) {
+                    console.log("Rules của trạm Assembly (Alias):", response.data.rules);
+                    return response.data.rules;
                 }
             } catch (error) {
-                console.error("Lỗi khi tải lịch sử đóng gói:", error);
+                console.error("Không thể lấy rules của Alias WO:", error);
+                return null;
             }
+        }
+    };
+
+    const fetchAliasWOMaterialsStatus = async () => {
+                if (!woData?.WO) return;
+                try {
+                    const result = await workstationAPI.getLoggedMaterials(woData.WO);
+                    if (result.success) {
+                        return result;
+                    }
+                } catch (error) {
+                    console.error("Lỗi khi tải lịch sử vật tư:", error);
+                }
+            };
+
+    // FETCH LỊCH SỬ ĐÓNG GÓI TỪ DB 
+    useEffect(() => {
+        console.log(woData.rules?.boxRule);
+        console.log(woData);
+        const fetchHistory = async () => {
+        if (!woData?.WO) return;
+        try {
+            const result = await workstationAPI.getLoggedBoxes(woData.WO);
+            if (result.success && result.data) {
+            const fetchedBoxes = result.data || [];
+            setBoxes(fetchedBoxes);
+
+            // LOGIC: YÊU CẦU WCTR KHI LỆNH ĐÓNG GÓI MỚI TINH
+            const processedQty = (Number(woData.QTY_OK) || 0) + (Number(woData.QTY_NG) || 0);
+
+            if (processedQty === 0 && woData.WCtr === 'TBC') {
+                setWctrModalOpen(true);
+            }
+            }
+        } catch (error) {
+            console.error("Lỗi khi tải lịch sử đóng gói:", error);
+        }
         };
         fetchHistory();
     }, [woData.WO]);
 
+    const getAllowedOuputQTY = async () => {
+        const mainInputsData = await fetchAliasWOMaterialsStatus();
+        console.log(mainInputsData);
+        const mainInput = mainInputsData?.data?.mainInputs;
+        const grouped = mainInput.reduce((acc, item) => {
+            if (!acc[item.pn]) {
+                acc[item.pn] = 0;
+            }
+
+            acc[item.pn] += item.qty;
+
+            return acc;
+        }, {});
+        const minQty = Math.min(...Object.values(grouped));
+        return minQty;
+    }
+
+
+    const checkMaterialReadiness = async (totalOutputItems) => {
+    try {
+        // Kiểm tra xem đã có mã Alias (Lệnh Assembly) chưa
+        if (!woData?.AliasWO) {
+            return { isValid: false, error: "Lệnh hiện tại chưa được liên kết với trạm Assembly (Thiếu Alias WO)!" };
+        }
+
+        // --- BƯỚC 1: FETCH DỮ LIỆU CỦA THẰNG ALIAS WO ---
+        // SỬA LỖI: Thêm await và dùng Promise.all để gọi 2 API song song giúp tăng tốc độ
+        const [materialsRes, rulesRes] = await Promise.all([
+            fetchAliasWOMaterialsStatus(woData.AliasWO), // Hãy chắc chắn bạn truyền tham số WO vào đây
+            fetchAliasRules(woData.AliasWO)
+        ]);
+        
+        // Bóc tách dữ liệu lịch sử scan (dựa theo JSON: materialsRes.data)
+        const loggedMain = materialsRes?.data?.mainInputs || [];
+        const loggedRaw = materialsRes?.data?.rawMaterials || [];
+
+        // SỬA LỖI: Bóc tách dữ liệu Rules (dựa theo JSON: không có key "rules" bọc ngoài)
+        // Lưu ý: Nếu bạn dùng axios, kết quả nằm trong rulesRes.data. Nếu fetch thường đã parse json, nó là rulesRes
+        const aliasRules = rulesRes?.data || rulesRes || {};
+        
+        const requiredMainPNs = (aliasRules.mainInputs || []).map(r => r.partNumber).filter(Boolean);
+        const requiredRawPNs = (aliasRules.rawMaterials || []).map(r => r.partNumber).filter(Boolean);
+
+        const scannedMainPNs = [...new Set(loggedMain.map(item => item.pn))];
+        const scannedRawPNs = [...new Set(loggedRaw.map(item => item.pn))];
+
+        // --- BƯỚC 2: KIỂM TRA XEM ĐÃ ĐỦ LOẠI PN HAY CHƯA ---
+        const missingMain = requiredMainPNs.filter(pn => !scannedMainPNs.includes(pn));
+        const missingRaw = requiredRawPNs.filter(pn => !scannedRawPNs.includes(pn));
+
+        if (missingMain.length > 0 || missingRaw.length > 0) {
+            const missingAll = [...missingMain, ...missingRaw].join(', ');
+            return {
+                isValid: false,
+                type: 'MISSING_MATERIALS', // THÊM DÒNG NÀY
+                error: `Trạm Assembly (Alias WO) chưa scan đủ các loại vật tư yêu cầu!\nCần bổ sung các Part Number sau: ${missingAll}`
+            };
+        }
+
+        // --- BƯỚC 3: TÍNH MAX QTY DỰA VÀO NHÓM MAIN INPUTS MIN ---
+        let maxAllowedQty = Infinity;
+
+        if (requiredMainPNs.length > 0) {
+            // Gom nhóm và tính tổng số lượng (qty) đã scan cho từng loại pn thuộc mainInputs
+            const groupedMainQty = loggedMain.reduce((acc, item) => {
+                if (!acc[item.pn]) acc[item.pn] = 0;
+                acc[item.pn] += (Number(item.qty) || 0); // Cộng dồn qty của từng dòng
+                return acc;
+            }, {});
+
+            // Lấy ra mảng chứa tổng số lượng của các loại PN bắt buộc
+            // Ví dụ kết quả sẽ là: [50, 50] cho NVI0241702011IPO và NVI0241702021IPO
+            const possibleOutputs = requiredMainPNs.map(pn => groupedMainQty[pn] || 0);
+
+            // maxAllowedQty chính là số lượng của nhóm PN có ít hàng nhất (min)
+            maxAllowedQty = Math.min(...possibleOutputs);
+        }
+
+        console.log(`[Validation] Total Box Items: ${totalOutputItems} | Max Allowed (Min of MainInputs): ${maxAllowedQty}`);
+
+        // --- BƯỚC 4: KẸP CHẶT ĐIỀU KIỆN SỐ LƯỢNG ---
+        if (maxAllowedQty !== Infinity && totalOutputItems > maxAllowedQty) {
+            return {
+                isValid: false,
+                type: 'QUANTITY_EXCEEDED', // THÊM DÒNG NÀY
+                error: `Lỗi số lượng! Vật tư chính (Main Inputs) bên trạm Assembly chỉ đủ để đóng tối đa ${maxAllowedQty} sản phẩm. Thùng hiện tại đang yêu cầu xuất ${totalOutputItems} sản phẩm.`
+            };
+        }
+
+        return { isValid: true };
+    } catch (error) {
+        console.error("Lỗi khi kiểm tra vật tư Alias:", error);
+        return { isValid: false, error: "Lỗi khi kiểm tra vật tư với hệ thống!" };
+    }
+};
+
+
+
     useEffect(() => {
-        if (!ngModal.isOpen && !skipModal.isOpen && !doneModal.isOpen && !showBoxScanner && !showItemScanner && !showDoneScanner) {
+        if (!isNgModalOpen && !skipModal.isOpen && !doneModal.isOpen && !showBoxScanner && !showItemScanner && !showDoneScanner) {
             if (activeBox && activeBox.items.length < activeBox.maxQty && itemInputRef.current) {
                 itemInputRef.current.focus();
             } else if (!activeBox && boxInputRef.current) {
                 boxInputRef.current.focus();
             }
         }
-    }, [ngModal.isOpen, skipModal.isOpen, doneModal.isOpen, showBoxScanner, showItemScanner, showDoneScanner, boxes, activeBox]);
+    }, [isNgModalOpen, skipModal.isOpen, doneModal.isOpen, showBoxScanner, showItemScanner, showDoneScanner, boxes, activeBox]);
 
     const handleScanBox = async (code) => {
+
         const cleanedCode = code.trim();
         if(!cleanedCode) return;
         setBoxError('');
         
-        if (boxRule?.fixedString && !cleanedCode.includes(boxRule.fixedString)) {
+        if (boxRule?.fixedString && !cleanedCode.toUpperCase().includes(boxRule.fixedString.toUpperCase())) {
             setBoxError(`Mã thùng không hợp lệ! Chuỗi không chứa '${boxRule.fixedString}'.`);
             setBoxInput('');
             return;
@@ -88,6 +237,13 @@ const FramePackingProc = () => {
             setBoxInput('');
             return;
         }
+
+        const validationStatus = await checkMaterialReadiness(0); 
+        if (!validationStatus.isValid && validationStatus.type === 'MISSING_MATERIALS') {
+            setBoxError(validationStatus.error); // Hiển thị lỗi lên UI màn hình
+            setBoxInput('');
+            return; // KHÓA CỨNG: Không cho phép tạo activeBox để quét sản phẩm
+        }
         
         const newBox = { id: cleanedCode, maxQty: MAX_QTY_PER_BOX, items: [], isFinished: false, createdAt: new Date().toLocaleTimeString() };
         setBoxes([newBox, ...boxes]);
@@ -99,7 +255,7 @@ const FramePackingProc = () => {
         if(!cleanedCode || !activeBox) return;
         setItemError('');
         
-        if (outputMain?.fixedString && !cleanedCode.includes(outputMain.fixedString)) {
+        if (outputMain?.fixedString && !cleanedCode.toUpperCase().includes(outputMain.fixedString.toUpperCase())) {
             setItemError(`Mã sản phẩm không hợp lệ! Chuỗi không chứa '${outputMain.fixedString}'.`);
             setItemInput('');
             return;
@@ -141,15 +297,44 @@ const FramePackingProc = () => {
     const handleFinishBox = async (boxId) => {
         const boxToFinish = boxes.find(b => b.id === boxId);
         if (!boxToFinish) return;
+
+        const totalItems = boxes.reduce((sum, current) => sum + current.items.length, 0);
+        const validationStatus = await checkMaterialReadiness(totalItems);
+
+        // 1. Nếu VẪN thiếu vật tư (Trường hợp hãn hữu lọt qua) -> Block cứng
+        if(!validationStatus.isValid && validationStatus.type === 'MISSING_MATERIALS'){
+            alert(`${validationStatus.error}`);
+            return;
+        }
+
+        // 2. Nếu VƯỢT SỐ LƯỢNG định mức -> Bật Modal cầu cứu thay vì văng Alert cứng nhắc
+        if(!validationStatus.isValid && validationStatus.type === 'QUANTITY_EXCEEDED'){
+            setQtyWarningModal({
+                isOpen: true,
+                boxId: boxId,
+                message: validationStatus.error
+            });
+            return;
+        }
+
+        // 3. Nếu HỢP LỆ 100% -> Chốt luôn
+        proceedFinishBox(boxId);
+    };
+
+    // Hàm xử lý gọi API chốt thùng được tách riêng ra
+    const proceedFinishBox = async (boxId) => {
+        const boxToFinish = boxes.find(b => b.id === boxId);
         try {
             const payload = {
                 WO: woData.WO, BoxId: boxToFinish.id, PN: outputMain?.partNumber || availablePNs[0],
                 BoxQty: boxToFinish.items.length, Items: boxToFinish.items.map(item => item.code), IsSkipped: false, SkipReason: ""
             };
+
             const result = await workstationAPI.logPacking(payload);
             if (result.success) {
                 const updatedBoxes = boxes.map(b => b.id === boxId ? { ...b, isFinished: true } : b);
                 setBoxes(updatedBoxes);
+                setQtyWarningModal({ isOpen: false, boxId: null, message: '' }); // Đóng Modal nếu đang mở
             } else {
                 alert(result.message || "Lỗi khi chốt thùng!");
             }
@@ -167,6 +352,19 @@ const FramePackingProc = () => {
                 WO: woData.WO, BoxId: boxToFinish.id, PN: outputMain?.partNumber || availablePNs[0],
                 BoxQty: boxToFinish.items.length, Items: boxToFinish.items.map(item => item.code), IsSkipped: true, SkipReason: skipModal.reason
             };
+            const totalItems = boxes.reduce((sum, current) => {
+                return sum + current.items.length;
+            }, 0);
+
+            console.log(totalItems);
+            
+            const validationStatus = await checkMaterialReadiness(totalItems);
+
+            if(!validationStatus.isValid){
+                alert(`${validationStatus.error}`);
+                return;
+            }
+
             const result = await workstationAPI.logPacking(payload);
             if (result.success) {
                 const updatedBoxes = boxes.map(b => b.id === skipModal.boxId ? { ...b, isFinished: true, skipReason: skipModal.reason } : b );
@@ -176,28 +374,11 @@ const FramePackingProc = () => {
                 alert(result.message || "Lỗi khi chốt hộp non!");
             }
         } catch (error) {
-            alert("Lỗi kết nối máy chủ!");
+            alert(`Lỗi kết nối máy chủ! ${error}`);
         }
     };
 
-    const handleSubmitNg = async () => {
-        const ngQty = parseFloat(ngModal.qty);
-        if (isNaN(ngQty) || ngQty <= 0) return alert("Vui lòng nhập số lượng lỗi hợp lệ!");
-        if (!ngModal.desc.trim()) return alert("Vui lòng nhập mô tả lỗi!");
-        try {
-            const payload = { WO: woData.WO, PartNO: ngModal.pn, QTY: ngQty, Description: ngModal.desc, Type: MESSAGE_TYPE.DEFECT };
-            const result = await workstationAPI.logDefect(payload);
-            if (result.success) {
-                alert("Đã gửi báo cáo NG thành công!");
-                setNgModal({ isOpen: false, pn: availablePNs[0] || '', desc: '', qty: '' });
-            } else {
-                alert(result.message || "Lỗi khi báo cáo NG!");
-            }
-        } catch (error) {
-            alert("Lỗi kết nối máy chủ!");
-        }
-    };
-
+ 
     // HÀM CHỐT LỆNH TỐI GIẢN (DÙNG CHUNG CẢ MACHINING & PACKING)
     const verifyAndMarkDone = async (scannedWo) => {
         try {
@@ -251,6 +432,24 @@ const FramePackingProc = () => {
 
     const handleDoneCameraScan = (decodedText) => { setShowDoneScanner(true); verifyAndMarkDone(decodedText); };
 
+    const handleSetWctr = async (selectedLineCode) => {
+        setIsSubmittingWctr(true);
+        try {
+            const res = await workstationAPI.setWctr(woData.WO, selectedLineCode);
+            if (res.success) {
+                alert("Đã ghi nhận Line/Trạm thành công!");
+                useProductionStore.getState().setCurrentWorkstation({ ...woData, WCtr: selectedLineCode });
+                setWctrModalOpen(false);
+            } else {
+                alert(res.message || "Lỗi hệ thống khi cập nhật Line/Trạm!");
+            }
+        } catch (error) {
+            alert("Lỗi kết nối máy chủ!");
+        } finally {
+            setIsSubmittingWctr(false);
+        }
+    };
+
     return(
         <div className="w-full mx-auto bg-slate-800 rounded-2xl border border-slate-700 shadow-2xl flex flex-col overflow-hidden min-h-[700px] relative animate-fade-in">
             {showBoxScanner && <BarcodeScanner onScanSuccess={(text) => { setShowBoxScanner(false); handleScanBox(text); }} onClose={() => setShowBoxScanner(false)} />}
@@ -263,7 +462,19 @@ const FramePackingProc = () => {
                     <div>
                         <h1 className="text-slate-200 font-bold text-lg sm:text-xl tracking-wide uppercase">Packing Process</h1>
                         <div className="flex flex-wrap items-center gap-2 mt-1">
-                            <span className="bg-orange-500/20 text-orange-300 text-xs px-2 py-0.5 rounded border border-orange-500/30 whitespace-nowrap">WO: {woData.WO}</span>
+                            <div className="flex items-center gap-2">
+                                <span className="bg-blue-500/20 text-blue-300 border border-blue-500/30 px-3 py-1 rounded-md font-mono font-bold tracking-wider">
+                                    WO: {woData.WO}
+                                </span>
+                                {woData.AliasWO && (
+                                    <>
+                                        <LinkIcon size={16} className="text-slate-500" />
+                                        <span className="bg-slate-700 text-slate-400 border border-slate-600 px-3 py-1 rounded-md font-mono font-bold tracking-wider text-xs">
+                                            Ref: {woData.AliasWO}
+                                        </span>
+                                    </>
+                                )}
+                            </div>
                             <span className="text-slate-500 text-xs sm:text-sm font-mono truncate">Model: {woData.ModelNO}</span>
                         </div>
                     </div>
@@ -308,8 +519,8 @@ const FramePackingProc = () => {
                     </div>
                     <div className="w-full h-px bg-slate-700 xl:hidden my-2"></div>
                     <div className="w-full flex flex-wrap sm:flex-nowrap items-center gap-2 sm:gap-3 xl:w-auto self-start xl:self-center">
-                        <ActionButton onClick={() => setNgModal({...ngModal, isOpen: true})} label="Báo Lỗi" color="red" icon={<AlertTriangle size={18}/>} className="flex-1 min-w-[120px] xl:flex-none py-3 sm:py-4" />
-                        <ActionButton onClick={() => setSkipModal({...skipModal, isOpen: true, boxId: activeBox.id})} label="Skip Box" color="slate" icon={<PackagePlus size={18}/>} className="flex-1 min-w-[120px] xl:flex-none py-3 sm:py-4" />
+                        <ActionButton onClick={() => setIsNgModalOpen(true)} label={t('production.ngReport')} color="red" icon={<AlertTriangle size={18}/>} className="flex-1 min-w-[120px] xl:flex-none py-3 sm:py-4" />
+                        <ActionButton onClick={() => setSkipModal({...skipModal, isOpen: true, boxId: activeBox.id})} label="ĐÓNG THIẾU" color="slate" icon={<PackagePlus size={18}/>} className="flex-1 min-w-[120px] xl:flex-none py-3 sm:py-4" />
                     </div>
                 </div>
             )}
@@ -370,31 +581,14 @@ const FramePackingProc = () => {
             </div>
 
             {/* Các Modal phụ trợ NG, Skip, Done giữ nguyên nội dung ... */}
-            {ngModal.isOpen && (
-                <div className="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-slate-800 w-full max-w-md rounded-2xl border border-red-500/50 shadow-2xl p-6 animate-fade-in-up">
-                        <h2 className="text-xl font-bold text-red-400 mb-4 border-b border-slate-700 pb-3 flex items-center gap-2"><AlertTriangle/> Báo Lỗi (NG)</h2>
-                        <div className="mb-4">
-                            <label className="block text-slate-300 font-bold mb-2">Chọn Part Number:</label>
-                            <select value={ngModal.pn} onChange={(e) => setNgModal({...ngModal, pn: e.target.value})} className="w-full bg-slate-900 border border-slate-600 text-white px-4 py-3 rounded-lg focus:ring-2 focus:ring-red-500 outline-none font-mono">
-                                {availablePNs.map((pn, i) => <option key={i} value={pn}>{pn}</option>)}
-                            </select>
-                        </div>
-                        <div className="mb-4">
-                            <label className="block text-slate-300 font-bold mb-1">Số lượng Sản phẩm NG (QTY):</label>
-                            <input type="number" value={ngModal.qty} onChange={(e) => setNgModal({...ngModal, qty: e.target.value})} className="w-full bg-slate-900 border border-slate-600 text-white px-4 py-3 rounded-lg focus:ring-2 focus:ring-red-500 outline-none font-mono text-xl text-center" placeholder="0" />
-                        </div>
-                        <div className="mb-6">
-                            <label className="block text-slate-300 font-bold mb-2">Mô tả chi tiết:</label>
-                            <textarea value={ngModal.desc} onChange={(e) => setNgModal({...ngModal, desc: e.target.value})} className="w-full bg-slate-900 border border-slate-600 text-white px-4 py-3 rounded-lg focus:ring-2 focus:ring-red-500 outline-none h-24" placeholder="Ghi chú chi tiết..." />
-                        </div>
-                        <div className="flex gap-3">
-                            <button onClick={() => setNgModal({...ngModal, isOpen: false})} className="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-3 rounded-lg font-bold">HỦY</button>
-                            <button onClick={handleSubmitNg} className="flex-1 bg-red-600 hover:bg-red-500 text-white font-bold py-3 rounded-lg shadow-lg">GỬI</button>
-                        </div>
-                    </div>
-                </div>
-            )}
+            <DefectReportModal 
+                isOpen={isNgModalOpen} 
+                onClose={() => setIsNgModalOpen(false)} 
+                wo={woData.WO}
+                modelNo={woData.ModelNO}
+            />
+
+
             {skipModal.isOpen && (
                 <div className="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
                     <div className="bg-slate-800 w-full max-w-md rounded-2xl border border-slate-600 shadow-2xl p-6 animate-fade-in-up text-center">
@@ -403,7 +597,7 @@ const FramePackingProc = () => {
                         <p className="text-slate-400 mb-6 text-sm">Bạn đang yêu cầu chốt hộp <b>#{skipModal.boxId}</b> dù chưa đạt tiêu chuẩn (Max QTY).</p>
                         <div className="mb-6 text-left">
                             <label className="block text-slate-300 font-bold mb-2">Lý do đóng hộp non:</label>
-                            <input type="text" autoFocus value={skipModal.reason} onChange={(e) => setSkipModal({...skipModal, reason: e.target.value})} onKeyDown={(e) => e.key === 'Enter' && handleSubmitSkipBox()} className="w-full bg-slate-900 border border-slate-600 text-white px-4 py-4 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-mono" placeholder="VD: Hết ca, Lô cuối..." />
+                            <input type="text" value={skipModal.reason} onChange={(e) => setSkipModal({...skipModal, reason: e.target.value})} onKeyDown={(e) => e.key === 'Enter' && handleSubmitSkipBox()} className="w-full bg-slate-900 border border-slate-600 text-white px-4 py-4 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-mono" placeholder="VD: Hết ca, Lô cuối..." />
                         </div>
                         <div className="flex gap-3 mt-4">
                             <button onClick={() => setSkipModal({...skipModal, isOpen: false})} className="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-3 rounded-lg font-bold">HỦY</button>
@@ -426,7 +620,7 @@ const FramePackingProc = () => {
                             
                             <input 
                                 type="text" 
-                                autoFocus
+                                
                                 value={doneModal.scannedWo || ''} 
                                 onChange={(e) => setDoneModal(prev => ({...prev, scannedWo: e.target.value}))} 
                                 onKeyDown={(e) => e.key === 'Enter' && verifyAndMarkDone(doneModal.scannedWo)}
@@ -459,6 +653,37 @@ const FramePackingProc = () => {
                     </div>
                 </div>
             )}
+            {/* MODAL CẬN HẬU KIỂM: CẢNH BÁO VƯỢT ĐỊNH MỨC SỐ LƯỢNG */}
+            {qtyWarningModal.isOpen && (
+                <div className="fixed inset-0 z-[100] bg-slate-900/95 backdrop-blur-md flex items-center justify-center p-4">
+                    <div className="bg-slate-800 border-2 border-orange-500 rounded-3xl w-full max-w-lg shadow-[0_0_50px_rgba(249,115,22,0.3)] overflow-hidden animate-fade-in-up">
+                        <div className="bg-orange-600 p-6 flex items-center gap-3 text-white">
+                            <AlertTriangle size={28} />
+                            <h3 className="text-xl font-black uppercase tracking-wider">Cảnh báo Vượt Định Mức</h3>
+                        </div>
+                        <div className="p-8">
+                            <p className="text-slate-300 text-lg mb-6 leading-relaxed whitespace-pre-line">{qtyWarningModal.message}</p>
+                            <p className="text-orange-400 font-bold mb-8 italic">Bạn có muốn tạm dừng để bổ sung quét vật tư cho Lệnh, hay vẫn xác nhận Ép Chốt thùng này?</p>
+                            <div className="flex gap-4">
+                                <button onClick={() => setQtyWarningModal({ isOpen: false, boxId: null, message: '' })} className="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-bold py-4 rounded-xl transition-all">
+                                    ĐỂ TÔI ĐI QUÉT BỔ SUNG
+                                </button>
+                                <button onClick={() => proceedFinishBox(qtyWarningModal.boxId)} className="flex-1 bg-orange-600 hover:bg-orange-500 text-white font-black py-4 rounded-xl shadow-lg shadow-orange-900/50 transition-all">
+                                    ÉP CHỐT THÙNG NÀY
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+            {/* MODAL BẮT BUỘC QUÉT WORKCENTER */}
+            <WctrSelectionModal 
+                isOpen={wctrModalOpen}
+                woData={woData}
+                isLoadingSubmit={isSubmittingWctr}
+                onClose={() => { setWctrModalOpen(false); clearCurrentWorkstation(); }}
+                onConfirm={handleSetWctr}
+            />
         </div>
     );
 };
