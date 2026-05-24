@@ -373,24 +373,46 @@ const TraceabilityView = () => {
                                             detailPanel.data.length === 0 ? (
                                                 <p className="p-4 text-emerald-400 italic text-center font-bold bg-emerald-900/10">WO này không có báo lỗi (NG) nào.</p>
                                             ) : (
-                                                <table className="w-full text-left border-collapse">
-                                                    <thead className="bg-slate-900/50 border-b border-slate-700 text-slate-400 text-xs uppercase">
-                                                        <tr>
-                                                            <th className="p-3">Part Number</th>
-                                                            <th className="p-3">Ghi chú</th>
-                                                            <th className="p-3 text-right">SL Báo (QTY)</th>
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody className="text-sm text-slate-300 divide-y divide-slate-700/50">
-                                                        {detailPanel.data.map((row, i) => (
-                                                            <tr key={i} className="hover:bg-slate-700/20 text-rose-300">
-                                                                <td className="p-3 font-bold">{row.PartNO}</td>
-                                                                <td className="p-3">{row.Description}</td>
-                                                                <td className="p-3 text-right font-mono font-bold text-rose-400">{row.QTY}</td>
+                                                <div className="overflow-x-auto custom-scrollbar"> {/* Thêm div cuộn ngang phòng khi bảng nhiều cột bị tràn */}
+                                                    <table className="w-full text-left border-collapse whitespace-nowrap">
+                                                        <thead className="bg-slate-900/50 border-b border-slate-700 text-slate-400 text-xs uppercase">
+                                                            <tr>
+                                                                <th className="p-3">Thời gian</th>
+                                                                <th className="p-3">Part Number</th>
+                                                                <th className="p-3 text-center">Mã Lỗi</th>
+                                                                <th className="p-3 text-center">Trạm</th>
+                                                                <th className="p-3">Ghi chú</th>
+                                                                <th className="p-3 text-right">SL (QTY)</th>
                                                             </tr>
-                                                        ))}
-                                                    </tbody>
-                                                </table>
+                                                        </thead>
+                                                        <tbody className="text-sm text-slate-300 divide-y divide-slate-700/50">
+                                                            {detailPanel.data.map((row, i) => (
+                                                                <tr key={i} className="hover:bg-slate-700/20 text-rose-300">
+                                                                    <td className="p-3 text-slate-400 text-xs">
+                                                                        {new Date(row.Time).toLocaleString()}
+                                                                    </td>
+                                                                    <td className="p-3 font-bold">{row.PartNO}</td>
+                                                                    <td className="p-3 text-center">
+                                                                        <span className="bg-rose-900/40 text-rose-400 px-2 py-1 rounded font-mono text-xs border border-rose-800/50">
+                                                                            {row.DefectCode || 'N/A'}
+                                                                        </span>
+                                                                    </td>
+                                                                    <td className="p-3 text-center">
+                                                                        <span className="bg-slate-800 text-slate-300 px-2 py-1 rounded text-xs border border-slate-600">
+                                                                            {row.Station || 'N/A'}
+                                                                        </span>
+                                                                    </td>
+                                                                    <td className="p-3 truncate max-w-[200px]" title={row.Description}>
+                                                                        {row.Description}
+                                                                    </td>
+                                                                    <td className="p-3 text-right font-mono font-bold text-rose-400">
+                                                                        {row.QTY}
+                                                                    </td>
+                                                                </tr>
+                                                            ))}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
                                             )
                                         )}
 
