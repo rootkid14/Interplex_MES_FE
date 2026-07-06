@@ -5,53 +5,52 @@ import { TbLambda } from "react-icons/tb";
 const TopSystemBar = () => {
     const { i18n } = useTranslation();
 
-    // Hàm chuyển đổi ngôn ngữ
     const toggleLanguage = () => {
-        const currentLang = i18n.language;
-        const newLang = currentLang === 'vi' ? 'en' : 'vi';
-        i18n.changeLanguage(newLang);
+        i18n.changeLanguage(i18n.language === 'vi' ? 'en' : 'vi');
     };
 
     return (
-        <div className="h-16 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-4 sticky top-0 z-50 shadow-sm">
+        // 1. Thêm backdrop-blur và giảm opacity nền để tạo hiệu ứng kính mờ (Glassmorphism)
+        <div className="h-16 bg-slate-800/80 backdrop-blur-md border-b border-white/5 flex items-center justify-between px-6 sticky top-0 z-50 shadow-[0_4px_20px_-5px_rgba(0,0,0,0.3)]">
             
-            {/* --- CỤM BÊN TRÁI: Chỉ giữ lại Text Thương hiệu --- */}
-            <div className="flex items-center select-none cursor-default">
+            {/* --- CỤM BÊN TRÁI: Logo với hiệu ứng Gradient Text --- */}
+            <div className="flex items-center gap-4">
                 <div className="flex flex-col justify-center">
-                    <h1 className="font-black text-white leading-none tracking-wider text-2xl">
+                    <h1 className="font-black text-transparent bg-clip-text bg-gradient-to-r from-white to-slate-400 tracking-wider text-3xl">
                         INTERPLEX
                     </h1>
-                    <p className="text-[12px] text-blue-400 font-bold tracking-[0.2em] mt-1 uppercase">
-                        MES System
-                    </p>
+                    <div className="flex items-center gap-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>
+                        <p className="text-[10px] text-blue-400 font-bold tracking-[0.5em] uppercase">
+                            MES
+                        </p>
+                    </div>
                 </div>
             </div>
 
-            {/* --- CỤM BÊN PHẢI: Lambda Badge & Language Switcher --- */}
-            <div className="flex items-center gap-3">
+            {/* --- CỤM BÊN PHẢI: Lambda Badge & Controls --- */}
+            <div className="flex items-center gap-4">
                 
-                {/* Badge "Powered by Lambda" - Hiển thị tốt trên cả Mobile và Desktop */}
-                <div 
-                    className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-800/40 border border-slate-700/50 rounded-lg hover:bg-slate-800/80 transition-colors cursor-default" 
-                    title="Powered by Lambda Engine"
-                >
-                    <TbLambda className="w-6 h-6 bg-blue-600 rounded-sm" />
-                    <span className="text-[10px] font-bold text-slate-400 tracking-tight sm:tracking-wide">
-                        Powered by <span className="text-[12px] text-blue-600">Lambda</span>
+                {/* Badge "Powered by Lambda" - Hiệu ứng viền sáng nhẹ khi hover */}
+                <div className="relative group flex items-center gap-2 px-3 py-1.5 bg-slate-900/50 border border-white/5 rounded-lg transition-all duration-500 hover:border-blue-500/30">
+                    <div className="absolute inset-0 rounded-lg bg-gradient-to-r from-blue-600/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                    <TbLambda className="w-5 h-5 text-blue-500" />
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider group-hover:text-slate-300">
+                        Lambda AGENTIC
                     </span>
                 </div>
 
-                {/* Dải phân cách mỏng */}
-                <div className="w-[1px] h-5 bg-slate-700/50 mx-1"></div>
+                <div className="w-[1px] h-6 bg-gradient-to-b from-transparent via-slate-700 to-transparent"></div>
 
-                {/* Bộ chuyển đổi Ngôn ngữ VN/EN */}
+                {/* Bộ chuyển đổi Ngôn ngữ - Style "Toggle" chuyên nghiệp */}
                 <button
                     onClick={toggleLanguage}
-                    className="flex items-center justify-center bg-slate-800 border border-slate-700 hover:border-blue-500/50 px-3 py-1.5 rounded-lg transition-all active:scale-95 group"
+                    className="relative flex items-center bg-slate-900 border border-slate-700 hover:border-blue-500/50 px-4 py-1.5 rounded-lg transition-all active:scale-95 overflow-hidden"
                 >
-                    <span className="text-xs font-black text-slate-300 group-hover:text-blue-400">
-                        {i18n.language === 'vi' ? 'VN' : 'EN'}
+                    <span className="relative z-10 text-[10px] font-black text-slate-400 hover:text-blue-400 transition-colors uppercase">
+                        {i18n.language}
                     </span>
+                    <div className="absolute inset-0 bg-blue-500/5 translate-y-full group-hover:translate-y-0 transition-transform"></div>
                 </button>
             </div>
         </div>

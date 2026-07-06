@@ -1,54 +1,58 @@
 import React, { useState } from "react";
+import { ChevronDown } from "lucide-react"; // Dùng icon thay cho dấu +/- sẽ chuyên nghiệp hơn
 
 export const ExpandableSection = ({ 
   title, 
-  variant = "default", // Nhận 4 giá trị: 'default' | 'blue' | 'green' | 'warning'
+  variant = "default", 
   defaultOpen = false, 
   children 
 }) => {
   const [isOpen, setIsOpen] = useState(defaultOpen);
 
-  // Cấu hình 4 biến màu hài hòa cho giao diện Dark Theme
   const colorSchemes = {
     default: {
-      header: "bg-slate-700 hover:bg-slate-600 border-slate-600 text-slate-100",
-      body: "bg-slate-800/50 border-slate-600 text-slate-200"
+      header: "bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700/50",
+      body: "bg-slate-900/40 border-slate-700 text-slate-400"
     },
     blue: {
-      header: "bg-blue-400/90 hover:bg-blue-500 border-blue-500 text-white shadow-blue-900/30",
-      body: "bg-slate-800/80 border-blue-500/40 text-slate-200"
+      header: "bg-blue-900/20 border-blue-500/30 text-blue-400 hover:bg-blue-900/40",
+      body: "bg-slate-900/60 border-blue-500/20 text-slate-300"
     },
     green: {
-      header: "bg-emerald-600/90 hover:bg-emerald-500 border-emerald-500 text-white shadow-emerald-900/30",
-      body: "bg-slate-800/80 border-emerald-500/40 text-slate-200"
+      header: "bg-emerald-900/20 border-emerald-500/30 text-emerald-400 hover:bg-emerald-900/40",
+      body: "bg-slate-900/60 border-emerald-500/20 text-slate-300"
     },
     warning: {
-      header: "bg-amber-600/90 hover:bg-amber-500 border-amber-500 text-white shadow-amber-900/30",
-      body: "bg-slate-800/80 border-amber-500/40 text-slate-200"
+      header: "bg-amber-900/20 border-amber-500/30 text-amber-400 hover:bg-amber-900/40",
+      body: "bg-slate-900/60 border-amber-500/20 text-slate-300"
     }
   };
 
   const activeColor = colorSchemes[variant] || colorSchemes.default;
 
   return (
-    <div className="mb-4">
+    <div className="mb-3 transition-all duration-300">
       <button
         onClick={() => setIsOpen(!isOpen)}
-        // Đổi thành flex justify-between để dấu + / - luôn nằm sát mép phải
-        className={`w-full px-6 py-3 flex justify-between items-center transition-all duration-200 border shadow-md font-medium tracking-wide
+        className={`w-full px-5 py-3 flex justify-between items-center transition-all duration-300 border backdrop-blur-sm
           ${activeColor.header} 
-          ${isOpen ? 'rounded-t-2xl border-b-0' : 'rounded-full'}
+          ${isOpen ? 'rounded-t-xl border-b-0' : 'rounded-xl'}
         `}
       >
-        <span>{title}</span>
-        <span className="text-xl font-light">{isOpen ? '−' : '+'}</span>
+        <span className="font-bold text-sm tracking-wide uppercase">{title}</span>
+        {/* Sử dụng icon xoay thay vì dấu +/- */}
+        <ChevronDown 
+            size={18} 
+            className={`transition-transform duration-300 ${isOpen ? 'rotate-180' : 'rotate-0'}`} 
+        />
       </button>
       
-      {isOpen && (
-        <div className={`p-6 border border-t-0 rounded-b-2xl ${activeColor.body}`}>
+      {/* Thêm hiệu ứng transition cho phần body */}
+      <div className={`overflow-hidden transition-all duration-300 ease-in-out ${isOpen ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0'}`}>
+        <div className={`p-5 border border-t-0 rounded-b-xl ${activeColor.body}`}>
           {children}
         </div>
-      )}
+      </div>
     </div>
   );
 };

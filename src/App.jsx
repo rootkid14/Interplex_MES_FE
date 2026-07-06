@@ -10,7 +10,8 @@ import WorkStation from "./pages/WorkStation";
 import ModelConfig from './pages/ModelConfig';
 import AccountManager from './components/login/AccountManager';
 import DefectCodeRegistration from "./pages/DefectCodeRegistration";
-
+import BomConfig from "./pages/BomConfig"
+import DatabaseEnginePage from "./pages/DatabaseEngine";
 
 const ProtectedRoute = ({ isAuthenticated, children }) => {
   if (!isAuthenticated) {
@@ -51,14 +52,14 @@ function App() {
           } 
         />
           
-        <Route 
+        {/* <Route 
           path="/model-config" 
           element={
             <ProtectedRoute isAuthenticated={isAuthenticated}>
               <ModelConfig />
             </ProtectedRoute>
           } 
-        />
+        /> */}
 
         <Route 
           path="/accounts" 
@@ -76,6 +77,24 @@ function App() {
               <DefectCodeRegistration />
             </ProtectedRoute>
           } 
+        />
+
+        <Route
+          path="/model-config"
+          element={
+            <ProtectedRoute isAuthenticated={isAuthenticated}>
+              <BomConfig/>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/dbengine"
+          element={
+            <ProtectedRoute isAuthenticated={isAuthenticated}>
+              <DatabaseEnginePage/>
+            </ProtectedRoute>
+          }
         />
 
         {/* CATCH ALL: Bắt các đường dẫn không tồn tại (404) */}

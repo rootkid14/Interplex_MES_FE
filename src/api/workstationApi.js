@@ -1,5 +1,5 @@
 import apiClient from "./client";
-
+console.log("I am a real file")
 export const workstationAPI = {
   /**
    * Gọi API Backend để xác thực mã Lệnh Sản Xuất (WO)
@@ -132,4 +132,58 @@ export const workstationAPI = {
           throw error;
       }
     },
+    // =================================================================
+    // CÁC API MỚI CHO QUY TRÌNH HỢP NHẤT (MASTER - DETAIL POOL MODEL)
+    // =================================================================
+
+    // Lấy toàn bộ trạng thái của bể chứa (Linkage, Inputs, Boxes)
+    getPackingMasterStatus: async (packingWo) => {
+      const response = await apiClient.get(`/packing/master/status/${packingWo}`);
+      return response.data;
+    },
+
+
+    // Quét mã WO để check xem nó thuộc PartNumber nào (Phục vụ ghép Checklist)
+    checkAliasWoInfo: async (aliasWo) => {
+      const response = await apiClient.get(`/packing/master/check_alias/${aliasWo}`);
+      return response.data;
+    },
+
+    // Liên kết 1 Alias WO vào Packing Master
+    linkMasterAlias: async (payload) => {
+      // payload: { PackingWO: "...", AliasWO: "...", PartNumber: "..." }
+      const response = await apiClient.post('/packing/master/link_alias', payload);
+      return response.data;
+    },
+
+    // Ghi nhận vật tư (Main Input / Raw) vào bể chứa chung của Packing
+    logMasterMaterial: async (payload) => {
+      // payload: { PackingWO: "...", Code: "...", QTY: 1, Type: "MAIN_INPUT", PartNumber: "..." }
+      const response = await apiClient.post('/packing/master/log_material', payload);
+      return response.data;
+    },
+
+    // Chốt thùng (Đã bao gồm Validate sản lượng chặt chẽ ở Backend)
+    logMasterBox: async (payload) => {
+      // payload: { PackingWO: "...", BoxId: "...", Items: [], IsSkipped: false, SkipReason: "" }
+      const response = await apiClient.post('/packing/master/log_box', payload);
+      return response.data;
+    },
+
+    // Chốt lệnh tổng (Sẽ tự động chốt luôn các Alias)
+    markMasterDone: async (packingWo) => {
+      const response = await apiClient.post('/packing/master/mark_done', { PackingWO: packingWo });
+      return response.data;
+    },
+
+    // Lấy danh sách các Lệnh con (Sub-Assy) đã được liên kết
+  // Lấy danh sách các Lệnh phụ (Sub-Assy Alias) đã được lưu trong Database
+      getLinkedAliases: async (packingWo) => {
+          try {
+              const response = await apiClient.get(`/validation/getLinkedAliases/${packingWo}`);
+              return response.data;
+          } catch (error) {
+              throw error;
+          }
+      },
 };

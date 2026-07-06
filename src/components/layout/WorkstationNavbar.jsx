@@ -1,9 +1,11 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
-import { LayoutDashboard, ScanLine, Search, Boxes } from 'lucide-react';
+import { LayoutDashboard, ScanLine, Search, Boxes, Database } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 const WorkStationNavbar = ({ activeTab, setActiveTab }) => {
   const { t } = useTranslation();
+  const navigate = useNavigate();
 
   return (
     <header className="h-16 bg-slate-800/60 backdrop-blur-md border-b border-slate-700 flex items-center justify-center relative px-6 z-10">
@@ -35,6 +37,13 @@ const WorkStationNavbar = ({ activeTab, setActiveTab }) => {
           onClick={() => setActiveTab('traceability')} 
           icon={<Search size={18} />}
           label={t('navbar.traceability')}
+        />
+
+        <NavTab 
+          active={activeTab === 'data'} 
+          onClick={() => navigate('/dbengine')} 
+          icon={<Database size={18} />} 
+          label="Database"
         />
       </div>
 

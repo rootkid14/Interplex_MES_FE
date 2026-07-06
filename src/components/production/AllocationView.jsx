@@ -80,9 +80,9 @@ const AllocationView = () => {
     if (currentAllocation) {
         return (
             
-            <div className="h-full bg-slate-900 overflow-hidden flex flex-col relative z-0">
+            <div className="h-full bg-slate-950 overflow-hidden flex flex-col relative z-0">
                 {liveWOData && liveWOData.WO && (
-                    <div className="p-4 shrink-0 bg-slate-900 border-b border-slate-800 z-10 shadow-md">
+                    <div className="p-4 shrink-0 bg-slate-950 border-b border-slate-800 z-10 shadow-md">
                         <WorkOrderCard data={liveWOData} aliasWO={liveWOData.AliasWO} />
                     </div>
                 )}
@@ -92,7 +92,7 @@ const AllocationView = () => {
     }
 
     return (
-        <div className="h-full bg-slate-900 p-6 flex flex-col animate-fade-in relative z-0 overflow-y-auto">
+        <div className="h-full bg-slate-950 p-6 flex flex-col animate-fade-in relative z-0 overflow-y-auto">
             {mode !== 'menu' && (
                 <button onClick={() => {setMode('menu'); setErrorMsg(''); setJobId(''); setOsQty('');}} className="absolute top-6 left-6 flex items-center gap-2 text-slate-400 hover:text-white transition-colors font-bold bg-slate-800/50 px-4 py-2 rounded-lg">
                     <ArrowLeft size={20}/> QUAY LẠI
@@ -127,7 +127,7 @@ const AllocationView = () => {
                             <House size={20}/> CHẾ ĐỘ: SẢN XUẤT NỘI BỘ
                         </div>
                         <div className="flex flex-col sm:flex-row gap-4">
-                            <input type="text" value={jobId} onChange={(e) => setJobId(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleProcessInhouse(jobId)} placeholder="Quét hoặc nhập mã WO..." className="flex-1 bg-slate-900 border border-slate-600 text-white px-5 py-4 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none text-xl font-mono text-center sm:text-left transition-all" />
+                            <input type="text" value={jobId} onChange={(e) => setJobId(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleProcessInhouse(jobId)} placeholder="Quét hoặc nhập mã WO..." className="flex-1 bg-slate-950 border border-slate-600 text-white px-5 py-4 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none text-xl font-mono text-center sm:text-left transition-all" />
                             <button onClick={() => setShowScanner(true)} className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-4 rounded-2xl font-black flex justify-center items-center gap-2 shadow-lg shadow-blue-900/30 active:scale-95 transition-all">
                                 <ScanLine size={24} /> QUÉT MÃ
                             </button>
@@ -144,13 +144,13 @@ const AllocationView = () => {
                             <div className="bg-slate-800 p-5 rounded-2xl border border-slate-700">
                                 <label className="text-slate-400 font-bold text-sm mb-2 block uppercase tracking-wider">Mã Lệnh Sản Xuất Gốc (Original WO)</label>
                                 <div className="flex gap-3">
-                                    <input type="text" value={jobId} onChange={(e) => setJobId(e.target.value)} placeholder="Nhập mã WO đã xuất đi..." className="flex-1 bg-slate-900 border border-slate-600 text-white px-4 py-3.5 rounded-xl focus:ring-2 focus:ring-yellow-500 outline-none text-lg font-mono transition-all" />
+                                    <input type="text" value={jobId} onChange={(e) => setJobId(e.target.value)} placeholder="Nhập mã WO đã xuất đi..." className="flex-1 bg-slate-950 border border-slate-600 text-white px-4 py-3.5 rounded-xl focus:ring-2 focus:ring-yellow-500 outline-none text-lg font-mono transition-all" />
                                     <button onClick={() => setShowScanner(true)} className="bg-slate-700 hover:bg-slate-600 text-slate-300 px-4 rounded-xl flex items-center justify-center transition-colors"><ScanLine size={24} /></button>
                                 </div>
                             </div>
                             <div className="bg-slate-800 p-5 rounded-2xl border border-yellow-500/50 shadow-[0_0_15px_rgba(234,179,8,0.1)]">
                                 <label className="text-yellow-400 font-bold text-sm mb-2 block uppercase tracking-wider">Số lượng VỪA NHẬN THÊM từ OutSource (+)</label>
-                                <input type="number" value={osQty} onChange={(e) => setOsQty(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleProcessOutsource()} placeholder="VD: 500" className="w-full bg-slate-900 border border-yellow-500/50 text-white px-4 py-3.5 rounded-xl focus:ring-2 focus:ring-yellow-500 outline-none text-2xl font-black text-center font-mono transition-all" />
+                                <input type="number" value={osQty} onChange={(e) => setOsQty(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleProcessOutsource()} placeholder="VD: 500" className="w-full bg-slate-950 border border-yellow-500/50 text-white px-4 py-3.5 rounded-xl focus:ring-2 focus:ring-yellow-500 outline-none text-2xl font-black text-center font-mono transition-all" />
                             </div>
                             <button onClick={handleProcessOutsource} className="w-full bg-yellow-600 hover:bg-yellow-500 text-white px-6 py-4 rounded-2xl font-black text-lg flex justify-center items-center gap-2 shadow-lg shadow-yellow-900/30 active:scale-95 transition-all mt-4">
                                 OUTSOURCE ALLOCATION

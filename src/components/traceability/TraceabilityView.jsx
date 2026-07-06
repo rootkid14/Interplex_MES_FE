@@ -161,6 +161,28 @@ const TraceabilityView = () => {
         }
     };
 
+    // --- TÍNH NĂNG MỚI: TRACE BY WO ---
+    const executeWOTrace = async (wo) => {
+        setIsSearching(true);
+        setTreeData(null);
+        setSelectedWOs([]);
+        setDetailPanel(null);
+        setErrorMsg('');
+        try {
+            setTargetBoxId(wo); // Dùng chung biến này để hiển thị tiêu đề
+            const res = await traceabilityApi.woTrace(wo);
+            if (!res.success) throw new Error(res.message || "Không tìm thấy thông tin WO này.");
+            setTreeData(res.data);
+            // Mở tự động tab vật tư sau khi load cây xong để tiết kiệm thao tác
+            handleViewDetails('batches', wo);
+        } catch (error) {
+            setErrorMsg(error.message || "Lỗi kết nối đến máy chủ truy xuất WO.");
+        } finally {
+            setIsSearching(false);
+        }
+    };
+    // ----------------------------------
+
     const handleSearch = async (e) => {
         if (e) e.preventDefault();
         const query = searchInput.trim();
@@ -168,6 +190,9 @@ const TraceabilityView = () => {
         
         if (searchMode === 'BOX') {
             executeForwardTrace(query);
+        } else if (searchMode === 'WO') {
+            // --- GỌI TÍNH NĂNG MỚI NẾU ĐANG CHỌN MODE WO ---
+            executeWOTrace(query);
         } else {
             setIsSearching(true);
             setErrorMsg('');
@@ -257,12 +282,25 @@ const TraceabilityView = () => {
                     </h1>
                     <p className="text-slate-400 text-sm mb-6">{t('traceability.Explaination')}</p>
                     <form onSubmit={handleSearch} className="flex flex-col sm:flex-row gap-3">
-                        <div className="flex bg-slate-900 rounded-xl border border-slate-600 p-1">
-                            <button type="button" onClick={() => setSearchMode('BOX')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${searchMode === 'BOX' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>{t('traceability.tracebybox')}</button>
-                            <button type="button" onClick={() => setSearchMode('PRODUCT')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${searchMode === 'PRODUCT' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>{t('traceability.tracebyprd')}</button>
+                        <div className="flex bg-slate-900 rounded-xl border border-slate-600 p-1 flex-wrap">
+                            <button type="button" onClick={() => setSearchMode('BOX')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${searchMode === 'BOX' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>{t('traceability.tracebybox') || 'Mã Thùng'}</button>
+                            <button type="button" onClick={() => setSearchMode('PRODUCT')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${searchMode === 'PRODUCT' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>{t('traceability.tracebyprd') || 'Mã Sản Phẩm'}</button>
+                            {/* --- NÚT BẤM MỚI: TÌM THEO WO --- */}
+                            <button type="button" onClick={() => setSearchMode('WO')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${searchMode === 'WO' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>Trace by WO</button>
                         </div>
                         <div className="flex-1 relative">
-                            <input type="text" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} placeholder={searchMode === 'BOX' ? t('traceability.EnterBoxID') : t('traceability.EnterProductID')} className="w-full bg-slate-900 border border-slate-600 text-white pl-4 pr-12 py-3.5 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-mono text-lg" />
+                            {/* --- CẬP NHẬT PLACEHOLDER --- */}
+                            <input 
+                                type="text" 
+                                value={searchInput} 
+                                onChange={(e) => setSearchInput(e.target.value)} 
+                                placeholder={
+                                    searchMode === 'BOX' ? (t('traceability.EnterBoxID') || 'Nhập mã Thùng...') : 
+                                    searchMode === 'PRODUCT' ? (t('traceability.EnterProductID') || 'Nhập mã Sản Phẩm...') : 
+                                    'Enter JOB NO'
+                                } 
+                                className="w-full bg-slate-900 border border-slate-600 text-white pl-4 pr-12 py-3.5 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-mono text-lg" 
+                            />
                             <Search className="absolute right-4 top-4 text-slate-500" />
                         </div>
                         <button type="submit" disabled={isSearching || !searchInput.trim()} className="bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 text-white px-8 py-3.5 rounded-xl font-bold transition-all flex items-center justify-center gap-2 min-w-[140px]">
@@ -273,7 +311,7 @@ const TraceabilityView = () => {
                 </div>
             </div>
 
-            <div className="flex-1 flex flex-col lg:flex-row overflow-hidden bg-slate-900/50">
+            <div className="flex-1 flex flex-col lg:flex-row overflow-hidden bg-slate-950/50">
                 <div className="w-full lg:w-7/12 flex flex-col border-r border-slate-700 bg-slate-800/30 overflow-hidden">
                     <div className="p-4 bg-slate-800/80 border-b border-slate-700 flex justify-between items-center shrink-0">
                         <div>
@@ -299,7 +337,7 @@ const TraceabilityView = () => {
                         {!treeData ? (
                             <div className="h-full flex flex-col items-center justify-center text-slate-500 opacity-50 p-8 text-center">
                                 <GitMerge size={64} className="mb-4 text-slate-600" />
-                                <p>Nhập mã Box hoặc Sản phẩm và bấm Truy Vết.</p>
+                                <p>Nhập từ khóa và bấm Truy Vết.</p>
                             </div>
                         ) : (
                             <div className="inline-block min-w-full bg-slate-900 border border-slate-700 rounded-lg overflow-hidden animate-fade-in shadow-2xl">

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { ActionButton } from "../common/ActionButton";
-import { Truck, XCircle, CheckCircle, Package, Box, Printer, FilePlus, CheckSquare, Square, X, CheckCheck, Cpu, MousePointerClick, RefreshCcw } from "lucide-react";
+import { Truck, XCircle, CheckCircle, Package, Box, Printer, FilePlus, CheckSquare, Square, X, CheckCheck, Cpu, MousePointerClick, RefreshCcw, Trash2, Settings2, Edit3 } from "lucide-react";
 import useProductionStore from '../../store/productionStore';
 import { workstationAPI } from '../../api/workstationApi';
 import { modelConfigAPI } from "../../api/modelconfigApi";
@@ -15,9 +15,12 @@ const FrameOutSourceAllocator = () => {
     const woData = currentAllocation;
 
     const [cards, setCards] = useState([]); 
-    const [config, setConfig] = useState({ pn: '', maxQty: '' });
+    const [config, setConfig] = useState({ pn: '', maxQty: '', customQty: '' });
     const [loading, setLoading] = useState(false);
     
+    // STATE: CHẾ ĐỘ TẠO (Auto: Chia lô | Manual: Tạo lẻ)
+    const [creationMode, setCreationMode] = useState('auto'); 
+
     // STATE IN ẤN
     const [showPrintTypeSelector, setShowPrintTypeSelector] = useState(false);
     const [printMode, setPrintMode] = useState('none'); 
@@ -29,8 +32,6 @@ const FrameOutSourceAllocator = () => {
     // 2. DATA FETCHING
     // ==========================================
     const loadStatus = async () => {
-        console.log(woData)
-        console.log(liveWOData)
         if (!wo) return;
         setLoading(true);
         const res = await workstationAPI.getAllocationStatus(wo);
@@ -38,7 +39,7 @@ const FrameOutSourceAllocator = () => {
             setCards(res.data);
             if (res.data.length > 0) {
                 const firstCard = res.data[0];
-                setConfig({ pn: firstCard.pn, maxQty: firstCard.qty });
+                setConfig(prev => ({ ...prev, pn: firstCard.pn, maxQty: firstCard.qty || prev.maxQty }));
             }
             else
             {
@@ -54,28 +55,58 @@ const FrameOutSourceAllocator = () => {
     // ==========================================
     // 3. TÍNH TOÁN TIẾN ĐỘ CHUẨN XÁC
     // ==========================================
-    // Điểm KHÁC BIỆT CHÍNH SO VỚI INHOUSE: Lấy QTY_OK (Tổng lượng đã nhận từ Vendor) làm mốc
     const totalProducedOK = woData?.QTY_OK || 0;
     const totalAllocated = cards.reduce((sum, c) => sum + (c.qty || 0), 0);
     const remainingToAllocate = totalProducedOK - totalAllocated;
     
     const isConfigLocked = cards.length > 0; 
     const maxQtyNum = parseInt(config.maxQty) || 0;
+    const customQtyNum = parseInt(config.customQty) || 0;
 
-    // OUTSOURCE LUÔN LUÔN CHO PHÉP TẠO LÔ LẺ (Vì quy trình In-Progress không áp dụng khắt khe như inhouse)
-    const canGenerate = remainingToAllocate > 0 && maxQtyNum > 0;
+    // LOGIC ENABLE NÚT GENERATE (Kiểm tra theo Mode)
+    const canGenerate = remainingToAllocate > 0 && (creationMode === 'auto' ? maxQtyNum > 0 : (customQtyNum > 0 && customQtyNum <= remainingToAllocate));
 
     // ==========================================
-    // 4. HÀM GỌI API ALLOCATION
+    // 4. HÀM GỌI API ALLOCATION & RECALL
     // ==========================================
     const handleGenerate = async () => {
-        if (!config.pn || !maxQtyNum) return alert("Vui lòng nhập Part Number mới và Max QTY!");
+        if (!config.pn) return alert("Vui lòng nhập Part Number mới!");
         
-        const res = await workstationAPI.generateBatches({ WO: wo, PN: config.pn, MaxQTY: maxQtyNum });
+        let payload = { WO: wo, PN: config.pn };
+
+        if (creationMode === 'auto') {
+            if (!maxQtyNum) return alert("Vui lòng nhập Max QTY!");
+            payload.MaxQTY = maxQtyNum;
+            payload.IsManual = false;
+        } else {
+            if (!customQtyNum) return alert("Vui lòng nhập SL Xuất!");
+            payload.MaxQTY = customQtyNum; // Truyền tạm vào MaxQTY để backend không báo lỗi required
+            payload.CustomQTY = customQtyNum;
+            payload.IsManual = true;
+        }
+
+        const res = await workstationAPI.generateBatches(payload);
         if (res.success) {
             alert(res.message);
             loadStatus();
+            if (creationMode === 'manual') setConfig(prev => ({...prev, customQty: ''})); // Reset ô nhập tay
         } else alert(res.message);
+    };
+
+    const handleDeleteCard = async (barcodeToDelete) => {
+        if (!window.confirm("THU HỒI TEM: Bạn có chắc chắn muốn thu hồi (xóa) mã cấp phát Outsource này? Số lượng sẽ được hoàn lại vào kho chờ Re-label.")) return;
+        
+        try {
+            const payload = {"barcode" : barcodeToDelete};
+            const res = await workstationAPI.deleteAllocation(payload);
+            if (res.success) {
+                setCards(prev => prev.filter(c => c.barcode !== barcodeToDelete));
+            } else {
+                alert(res.message);
+            }
+        } catch (err) {
+            alert("Lỗi khi xóa: " + err.message);
+        }
     };
 
     const handleVerify = async (barcode, qty) => {
@@ -139,13 +170,9 @@ const FrameOutSourceAllocator = () => {
         if (selectedForPrint.length === 0) return alert("Vui lòng chọn ít nhất 1 thẻ để in!");
         
         try {
-            // Sửa logic tạo fileContent ở đây
             const fileContent = selectedForPrint.map(barcode => {
-                // Tìm thẻ tương ứng trong mảng cards để lấy qty
                 const targetCard = cards.find(c => c.barcode === barcode);
                 const qty = targetCard ? targetCard.qty : 0;
-                
-                // Trả về chuỗi có chứa qty (Bạn có thể đổi dấu phẩy thành dấu tab \t hoặc ký tự khác tùy form máy in)
                 return `${barcode},OS${wo},${qty}`; 
             }).join('\n');
             const blob = new Blob([fileContent], { type: 'text/plain' });
@@ -218,37 +245,71 @@ const FrameOutSourceAllocator = () => {
                             <span className="text-[10px] sm:text-xs text-slate-400 font-bold uppercase block mb-1">Re-Labeled</span>
                             <span className="text-emerald-400 font-black text-2xl sm:text-3xl">{totalAllocated}</span>
                         </div>
-                        <div className="bg-slate-800 p-3 sm:p-4 rounded-2xl border border-yellow-500/30 shadow-[0_0_10px_rgba(234,179,8,0.1)]">
+                        <div className="bg-slate-800 p-3 sm:p-4 rounded-2xl border border-yellow-500/30 shadow-[0_0_10px_rgba(234,179,8,0.1)] relative">
                             <span className="text-[10px] sm:text-xs text-yellow-500 font-bold uppercase block mb-1">Wait Re-Label</span>
-                            <span className="text-white font-black text-2xl sm:text-3xl">{remainingToAllocate}</span>
+                            <span className={`font-black text-2xl sm:text-3xl ${remainingToAllocate < 0 ? 'text-red-500' : 'text-white'}`}>{remainingToAllocate}</span>
                         </div>
                     </div>
 
-                    <div className="flex flex-col sm:flex-row gap-4 items-end">
-                        <div className="flex-[3]">
-                            <label className="text-xs text-slate-500 font-black uppercase mb-2 block ml-2">New Part Number (Sau Outsource)</label>
-                            <input 
-                                type="text" disabled={isConfigLocked || isPrintModeActive} value={config.pn} 
-                                onChange={(e) => setConfig({...config, pn: e.target.value.toUpperCase()})}
-                                className={`w-full bg-slate-900 border-2 border-slate-700 text-white px-5 py-3.5 rounded-2xl focus:border-yellow-500 outline-none transition-all font-bold ${(isConfigLocked || isPrintModeActive) ? 'opacity-50 cursor-not-allowed' : ''}`}
-                            />
+                    <div className="flex flex-col gap-3">
+                        {/* Toggle chế độ */}
+                        <div className="flex bg-slate-950 rounded-lg p-1 border border-yellow-500/30 w-max mb-1">
+                            <button 
+                                onClick={() => setCreationMode('auto')}
+                                className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-bold uppercase transition-colors ${creationMode === 'auto' ? 'bg-yellow-600 text-slate-900' : 'text-slate-500 hover:text-slate-300'}`}
+                            >
+                                <Settings2 size={14}/> Tự động chia lô
+                            </button>
+                            <button 
+                                onClick={() => setCreationMode('manual')}
+                                className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-bold uppercase transition-colors ${creationMode === 'manual' ? 'bg-orange-600 text-white' : 'text-slate-500 hover:text-slate-300'}`}
+                            >
+                                <Edit3 size={14}/> Nhập lẻ thủ công
+                            </button>
                         </div>
-                        <div className="flex-1">
-                            <label className="text-xs text-slate-500 font-black uppercase mb-2 block ml-2">QTY/Lô</label>
-                            <input 
-                                type="number" disabled={isPrintModeActive} value={config.maxQty} 
-                                onChange={(e) => setConfig({...config, maxQty: e.target.value})}
-                                placeholder="Nhập số sp/lô...."
-                                className={`w-full bg-slate-900 border-2 border-slate-700 text-white px-5 py-3.5 rounded-2xl text-center font-black text-xl `}
-                            />
+
+                        <div className="flex flex-col sm:flex-row gap-4 items-end">
+                            <div className="flex-[3]">
+                                <label className="text-xs text-slate-500 font-black uppercase mb-2 block ml-2">New Part Number (Sau Outsource)</label>
+                                <input 
+                                    type="text" disabled={isConfigLocked || isPrintModeActive} value={config.pn} 
+                                    onChange={(e) => setConfig({...config, pn: e.target.value.toUpperCase()})}
+                                    className={`w-full bg-slate-900 border-2 border-slate-700 text-white px-5 py-3.5 rounded-2xl focus:border-yellow-500 outline-none transition-all font-bold ${(isConfigLocked || isPrintModeActive) ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                />
+                            </div>
+                            <div className="flex-1">
+                                {creationMode === 'auto' ? (
+                                    <>
+                                        <label className="text-xs text-slate-500 font-black uppercase mb-2 block ml-2">QTY/Lô</label>
+                                        <input 
+                                            type="number" disabled={isPrintModeActive} value={config.maxQty} 
+                                            onChange={(e) => setConfig({...config, maxQty: e.target.value})}
+                                            placeholder="Số sp/lô...."
+                                            className="w-full bg-slate-900 border-2 border-slate-700 text-white px-5 py-3.5 rounded-2xl text-center font-black text-xl transition-all"
+                                        />
+                                    </>
+                                ) : (
+                                    <>
+                                        <label className="text-xs text-orange-500 font-black uppercase mb-2 block ml-2">QTY 1 Lô lẻ</label>
+                                        <input 
+                                            type="number" disabled={isPrintModeActive} value={config.customQty} 
+                                            onChange={(e) => setConfig({...config, customQty: e.target.value})}
+                                            placeholder="Nhập SL..."
+                                            className="w-full bg-slate-900 border-2 border-orange-500/50 focus:border-orange-500 text-white px-5 py-3.5 rounded-2xl text-center font-black text-xl transition-all"
+                                        />
+                                    </>
+                                )}
+                            </div>
+                            <button 
+                                onClick={handleGenerate}
+                                disabled={!canGenerate || isPrintModeActive}
+                                className={`h-[60px] px-10 rounded-2xl font-black transition-all flex items-center justify-center gap-2 whitespace-nowrap w-full sm:w-auto 
+                                    ${(!canGenerate || isPrintModeActive) ? 'bg-slate-800 text-slate-500 border-2 border-slate-700 cursor-not-allowed' : 
+                                    creationMode === 'auto' ? 'bg-yellow-600 hover:bg-yellow-500 text-slate-900 shadow-lg shadow-yellow-900/40 active:scale-95' : 'bg-orange-600 hover:bg-orange-500 text-white shadow-lg shadow-orange-900/40 active:scale-95'}`}
+                            >
+                                <FilePlus size={24}/> TẠO MÃ TEM
+                            </button>
                         </div>
-                        <button 
-                            onClick={handleGenerate}
-                            disabled={!canGenerate || isPrintModeActive}
-                            className={`h-[60px] px-10 rounded-2xl font-black transition-all flex items-center justify-center gap-2 whitespace-nowrap w-full sm:w-auto ${(!canGenerate || isPrintModeActive) ? 'bg-slate-800 text-slate-500 border-2 border-slate-700 cursor-not-allowed' : 'bg-yellow-600 hover:bg-yellow-500 text-white shadow-lg shadow-yellow-900/40 active:scale-95'}`}
-                        >
-                            <FilePlus size={24}/> TẠO MÃ TEM
-                        </button>
                     </div>
                 </div>
             </div>
@@ -311,7 +372,7 @@ const FrameOutSourceAllocator = () => {
                                             <div className="bg-slate-700/50 p-1.5 rounded-lg shrink-0">
                                                 <Package className="text-yellow-500" size={16} />
                                             </div>
-                                            <p className={`font-mono font-bold text-base truncate tracking-wider ${isSelected ? 'text-white' : 'text-slate-200'}`} title={card.barcode}>
+                                            <p className={`font-mono font-bold text-xs truncate tracking-wider ${isSelected ? 'text-white' : 'text-slate-200'}`} title={card.barcode}>
                                                 {card.barcode}
                                             </p>
                                         </div>
@@ -330,11 +391,23 @@ const FrameOutSourceAllocator = () => {
                                     <div className="flex justify-between items-center pt-2.5 border-t border-slate-700/50">
                                         <span className="text-xs text-slate-500 uppercase font-bold">QTY: <b className={`text-sm ${isSelected ? 'text-emerald-400' : 'text-emerald-500/70'}`}>{card.qty}</b></span>
                                         
-                                        {!isPrintModeActive && card.state === 'Wait-Verify' && (
-                                            <button onClick={(e) => { e.stopPropagation(); handleVerify(card.barcode, card.qty); }} className="text-[11px] bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded font-bold flex items-center gap-1 transition-colors shadow">
-                                                <CheckCircle size={14}/> DUYỆT
-                                            </button>
-                                        )}
+                                        <div className="flex gap-1.5">
+                                            {!isPrintModeActive && card.state === 'Wait-Verify' && (
+                                                <button onClick={(e) => { e.stopPropagation(); handleVerify(card.barcode, card.qty); }} className="text-[11px] bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded font-bold flex items-center gap-1 transition-colors shadow">
+                                                    <CheckCircle size={14}/> DUYỆT
+                                                </button>
+                                            )}
+
+                                            {!isPrintModeActive && (
+                                                <button 
+                                                    onClick={(e) => { e.stopPropagation(); handleDeleteCard(card.barcode); }} 
+                                                    className="text-[11px] bg-slate-800 hover:bg-red-600 border border-slate-700 hover:border-red-500 text-slate-400 hover:text-white px-2 py-1 rounded font-bold flex items-center gap-1 transition-all shadow group"
+                                                    title="Thu hồi tem này về kho chờ cấp phát"
+                                                >
+                                                    <Trash2 size={14} className="group-hover:animate-pulse"/> THU HỒI
+                                                </button>
+                                            )}
+                                        </div>
                                     </div>
                                 </div>
                             );

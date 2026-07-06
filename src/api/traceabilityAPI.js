@@ -40,5 +40,11 @@ export const traceabilityApi = {
     getItemsByBox: async (boxId) => {
         const response = await apiClient.get(`/tracebility/itemsbybox/${encodeURIComponent(boxId)}`);
         return response.data;
-    }
+    },
+    // 7. TRACE BY WO: Truy vết cây gia phả từ 1 Lệnh Sản Xuất (WO) cụ thể
+  woTrace: async (wo) => {
+    // Lưu ý: path ở đây phải khớp với prefix router ở backend (hiện tại hệ thống của bạn đang dùng 'tracebility')
+    const response = await apiClient.get(`/tracebility/tracebywo/${encodeURIComponent(wo)}`);
+    return response.data;
+  },
 };

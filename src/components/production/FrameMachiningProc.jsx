@@ -91,7 +91,7 @@ const FrameMachiningProc = () => {
             }
         }
       } catch (error) {
-        console.error("Lỗi khi tải lịch sử vật tư:", error);
+        console.error("Lỗi khi tải lịch sử :", error);
       }
     };
     fetchHistory();
@@ -145,7 +145,9 @@ const FrameMachiningProc = () => {
             return;
         }
 
-        setScanError(`Mã không hợp lệ: Không khớp với bất kỳ chuỗi nhận diện Vật tư nào của Model ${woData.ModelNO}`);
+        setScanError(`Mã ${scannedCode} không hợp lệ: Không khớp với bất kỳ chuỗi nhận diện Vật tư nào của Model ${woData.ModelNO}`);
+        console.log(rawRules)
+        console.log(mainInputRules)
         setMaterialInput('');
     };
 

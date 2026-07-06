@@ -11,7 +11,9 @@
   },
   "dependencies": {
     "@vitejs/plugin-basic-ssl": "^2.1.4",
+    "@xyflow/react": "^12.11.1",
     "axios": "^1.13.2",
+    "dagre": "^0.8.5",
     "date-fns": "^4.1.0",
     "html5-qrcode": "^2.3.8",
     "i18next": "^25.8.0",
@@ -21,6 +23,7 @@
     "react-i18next": "^16.5.3",
     "react-icons": "^5.6.0",
     "react-router-dom": "^7.12.0",
+    "recharts": "^3.9.1",
     "zustand": "^5.0.10"
   },
   "devDependencies": {
