@@ -1,0 +1,19 @@
+
+Các tính năng và nguy cơ cần review phần config:
+
+4. Cần tạo một loại Log dữ liệu dựa trên Trigger để theo dõi thay đổi config. 
+5. -> đề xuất cho cả hạng mục Raw_Material_QTY / 1 pcs thành phẩm vào để quản lý đủ liệu nữa (cái này sẽ ảnh hưởng đến cả phần scan)
+
+---------
+
+Thay đổi trong logic phòng thủ scan:
+-> đề xuất cho cả hạng mục Raw_Material_QTY / 1 pcs thành phẩm vào để quản lý đủ liệu nữa (cái này sẽ ảnh hưởng đến cả phần config)
+
+
+--------
+
+Thay đổi trong sản xuất:
+Đề xuất thêm cột begin time và end time vào bảng Master WO log để làm tính năng theo dõi sản lượng theo thời gian thực. -> để làm được cái này thì phải có một bảng cycle time theo model & process để tính toán cycle thực thế và trả về thông tin qua SSE để hiển thị ra WO card.
+
+
+

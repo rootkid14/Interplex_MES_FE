@@ -1,0 +1,126 @@
+dev log:
+thay đổi DB:
+thêm cột routingData vào bảng ModelConfigs
+tạo bảng WCMap
+
+tạo bảng log thay đôi BOM
+
+CREATE TABLE IPTH_BOM_Change_Queue (
+    LogID BIGINT IDENTITY(1,1) PRIMARY KEY,
+    IDBOM INT,
+    Component NCHAR(30),
+    ChangeType VARCHAR(10), -- 'INSERT', 'UPDATE', 'DELETE'
+    OldData NVARCHAR(MAX),  -- JSON snapshot cũ
+    NewData NVARCHAR(MAX),  -- JSON snapshot mới
+    IsProcessed BIT DEFAULT 0,
+    CreatedAt DATETIME DEFAULT GETUTCDATE()
+);
+
+-- Cấp quyền để đảm bảo bất kỳ User nào import Excel cũng ghi được log
+GRANT INSERT ON IPTH_BOM_Change_Queue TO public;
+
+
+-- thêm cột để tiện cho daemon
+-- Thêm cột AffectedModels (lưu JSON các Model chịu ảnh hưởng)
+ALTER TABLE IPTH_BOM_Change_Queue 
+ADD AffectedModels NVARCHAR(MAX) DEFAULT '[]';
+
+-- Thêm cột Status để kiểm soát Acknowledge (0: Mới, 1: Đang chờ Ack, 2: Đã xong)
+ALTER TABLE IPTH_BOM_Change_Queue 
+ADD AcknowledgeStatus INT DEFAULT 0;
+
+tạo trigger cho bảng log bom
+
+
+ALTER TRIGGER TRG_IPTH_BOM_Deep_Capture
+ON IPTH_BOM_LIST
+AFTER INSERT, UPDATE, DELETE
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Hàm cục bộ để lấy giá trị Component sạch
+    -- Lấy LTRIM(RTRIM(Component)) nếu nó không trống, nếu trống thì lấy BaseMaterial
+    -- Dùng NULLIF để biến chuỗi rỗng thành NULL, sau đó COALESCE sẽ lấy giá trị thay thế
+    
+    -- 1. Xử lý UPDATE
+    IF EXISTS (SELECT 1 FROM inserted) AND EXISTS (SELECT 1 FROM deleted)
+    BEGIN
+        IF EXISTS (
+            SELECT 1 FROM inserted i
+            INNER JOIN deleted d ON i.IDBOM = d.IDBOM
+            WHERE (SELECT i.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER) 
+               <> (SELECT d.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER)
+        )
+        BEGIN
+            INSERT INTO IPTH_BOM_Change_Queue (IDBOM, Component, ChangeType, OldData, NewData)
+            SELECT 
+                i.IDBOM, 
+                COALESCE(NULLIF(LTRIM(RTRIM(i.Component)), ''), LTRIM(RTRIM(i.BaseMaterial))),
+                'UPDATE',
+                (SELECT d.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER),
+                (SELECT i.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER)
+            FROM inserted i
+            INNER JOIN deleted d ON i.IDBOM = d.IDBOM
+            WHERE (SELECT i.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER) 
+               <> (SELECT d.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER);
+        END
+    END
+
+    -- 2. Xử lý INSERT
+    ELSE IF EXISTS (SELECT 1 FROM inserted) AND NOT EXISTS (SELECT 1 FROM deleted)
+    BEGIN
+        INSERT INTO IPTH_BOM_Change_Queue (IDBOM, Component, ChangeType, NewData)
+        SELECT 
+            IDBOM, 
+            COALESCE(NULLIF(LTRIM(RTRIM(Component)), ''), LTRIM(RTRIM(BaseMaterial))),
+            'INSERT', 
+            (SELECT i.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER)
+        FROM inserted i;
+    END
+
+    -- 3. Xử lý DELETE
+    ELSE IF EXISTS (SELECT 1 FROM deleted) AND NOT EXISTS (SELECT 1 FROM inserted)
+    BEGIN
+        INSERT INTO IPTH_BOM_Change_Queue (IDBOM, Component, ChangeType, OldData)
+        SELECT 
+            IDBOM, 
+            COALESCE(NULLIF(LTRIM(RTRIM(Component)), ''), LTRIM(RTRIM(BaseMaterial))),
+            'DELETE', 
+            (SELECT d.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER)
+        FROM deleted d;
+    END
+END;
+-*-------------------------------------------------------------
+
+Cần tạo bảng lưu tool đồ thị của db engine:
+CREATE TABLE Sys_Plot_Presets (
+    ID INT IDENTITY(1,1) PRIMARY KEY,
+    TableName VARCHAR(100) NOT NULL,       -- Bảng mà preset này áp dụng (VD: Master_Defect_Log)
+    PresetName NVARCHAR(100) NOT NULL,     -- Tên hiển thị (VD: Nút thắt Trạm)
+    Description NVARCHAR(255),             -- Mô tả ý nghĩa
+    IconName VARCHAR(50) DEFAULT 'BarChart2', -- Tên icon Lucide để render UI
+    ChartType VARCHAR(20) NOT NULL,        -- bar, line, pie
+    XAxis VARCHAR(100) NOT NULL,           -- Cột phân nhóm chính
+    YAxis VARCHAR(100),                    -- Cột giá trị (có thể NULL nếu dùng COUNT)
+    Aggregation VARCHAR(20) NOT NULL,      -- SUM, COUNT, AVG
+    TimeGrain VARCHAR(20),                 -- day, week, month (dành cho cột Datetime)
+    BreakdownColumn VARCHAR(100),          -- CỘT LEGEND: Để chia nhỏ dữ liệu (Stacked Bar)
+    CreatedBy VARCHAR(50),
+    CreatedAt DATETIME2 DEFAULT GETDATE()
+);
+
+
+----------------------------------
+
+Thêm bảng lưu log config:
+CREATE TABLE Sys_Config_Change_Log (
+    LogID INT IDENTITY(1,1) PRIMARY KEY,
+    ModelNO NVARCHAR(100) NOT NULL,
+    ChangedBy NVARCHAR(50) NOT NULL, 
+    OldData NVARCHAR(MAX),           
+    NewData NVARCHAR(MAX),           
+    ChangeTime DATETIME2 DEFAULT GETUTCDATE(),
+    IsAcknowledged BIT DEFAULT 0     
+);
+
