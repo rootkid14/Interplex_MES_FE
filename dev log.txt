@@ -1,10 +1,52 @@
 dev log:
 thay đổi DB:
 thêm cột routingData vào bảng ModelConfigs
-tạo bảng WCMap
+IF NOT EXISTS (
+    SELECT * FROM sys.columns 
+    WHERE object_id = OBJECT_ID(N'ModelConfigs') 
+    AND name = 'routingData'
+)
+BEGIN
+    ALTER TABLE ModelConfigs
+    ADD routingData NVARCHAR(MAX) DEFAULT '{}';
+    
+    PRINT 'Đã thêm thành công cột routingData vào bảng ModelConfigs.';
+END
+ELSE
+BEGIN
+    PRINT 'Cột routingData đã tồn tại trong bảng ModelConfigs, bỏ qua thao tác.';
+END
+GO
 
-tạo bảng log thay đôi BOM
 
+-------------------------------------------------------------------------------
+
+-- ==============================================================================
+-- CHÚ Ý: Đổi tên 'YourDatabaseName' thành tên Database thực tế của bạn
+-- USE [YourDatabaseName];
+-- GO
+-- ==============================================================================
+
+-- ==============================================================================
+-- 1. CLEAN UP: Xóa các object cũ nếu chúng đã tồn tại (Giúp script chạy lại được nhiều lần)
+-- ==============================================================================
+IF OBJECT_ID('TRG_IPTH_BOM_Deep_Capture', 'TR') IS NOT NULL
+BEGIN
+    DROP TRIGGER TRG_IPTH_BOM_Deep_Capture;
+    PRINT 'Dropped existing trigger TRG_IPTH_BOM_Deep_Capture.';
+END
+GO
+
+IF OBJECT_ID('IPTH_BOM_Change_Queue', 'U') IS NOT NULL
+BEGIN
+    DROP TABLE IPTH_BOM_Change_Queue;
+    PRINT 'Dropped existing table IPTH_BOM_Change_Queue.';
+END
+GO
+
+-- ==============================================================================
+-- 2. CREATE TABLE: Tạo bảng Log với đầy đủ các cột ngay từ đầu
+-- ==============================================================================
 CREATE TABLE IPTH_BOM_Change_Queue (
     LogID BIGINT IDENTITY(1,1) PRIMARY KEY,
     IDBOM INT,
@@ -13,58 +55,48 @@ CREATE TABLE IPTH_BOM_Change_Queue (
     OldData NVARCHAR(MAX),  -- JSON snapshot cũ
     NewData NVARCHAR(MAX),  -- JSON snapshot mới
     IsProcessed BIT DEFAULT 0,
-    CreatedAt DATETIME DEFAULT GETUTCDATE()
+    CreatedAt DATETIME2 DEFAULT GETUTCDATE(),
+    
+    -- Các cột phục vụ Daemon (Được gộp vào từ các lệnh ALTER)
+    AffectedModels NVARCHAR(MAX) DEFAULT '[]',
+    AcknowledgeStatus INT DEFAULT 0
 );
+PRINT 'Created table IPTH_BOM_Change_Queue.';
+GO
 
 -- Cấp quyền để đảm bảo bất kỳ User nào import Excel cũng ghi được log
 GRANT INSERT ON IPTH_BOM_Change_Queue TO public;
+PRINT 'Granted INSERT permission to public.';
+GO
 
-
--- thêm cột để tiện cho daemon
--- Thêm cột AffectedModels (lưu JSON các Model chịu ảnh hưởng)
-ALTER TABLE IPTH_BOM_Change_Queue 
-ADD AffectedModels NVARCHAR(MAX) DEFAULT '[]';
-
--- Thêm cột Status để kiểm soát Acknowledge (0: Mới, 1: Đang chờ Ack, 2: Đã xong)
-ALTER TABLE IPTH_BOM_Change_Queue 
-ADD AcknowledgeStatus INT DEFAULT 0;
-
-tạo trigger cho bảng log bom
-
-
-ALTER TRIGGER TRG_IPTH_BOM_Deep_Capture
+-- ==============================================================================
+-- 3. CREATE TRIGGER: Khởi tạo Trigger bắt sự thay đổi BOM
+-- LƯU Ý: Bảng IPTH_BOM_LIST bắt buộc phải được tạo TRƯỚC KHI chạy đoạn script này.
+-- Đã sử dụng cú pháp Correlated Subquery + INCLUDE_NULL_VALUES để tránh lỗi ép kiểu.
+-- ==============================================================================
+CREATE TRIGGER TRG_IPTH_BOM_Deep_Capture
 ON IPTH_BOM_LIST
 AFTER INSERT, UPDATE, DELETE
 AS
 BEGIN
     SET NOCOUNT ON;
 
-    -- Hàm cục bộ để lấy giá trị Component sạch
-    -- Lấy LTRIM(RTRIM(Component)) nếu nó không trống, nếu trống thì lấy BaseMaterial
-    -- Dùng NULLIF để biến chuỗi rỗng thành NULL, sau đó COALESCE sẽ lấy giá trị thay thế
-    
     -- 1. Xử lý UPDATE
     IF EXISTS (SELECT 1 FROM inserted) AND EXISTS (SELECT 1 FROM deleted)
     BEGIN
-        IF EXISTS (
-            SELECT 1 FROM inserted i
-            INNER JOIN deleted d ON i.IDBOM = d.IDBOM
-            WHERE (SELECT i.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER) 
-               <> (SELECT d.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER)
-        )
-        BEGIN
-            INSERT INTO IPTH_BOM_Change_Queue (IDBOM, Component, ChangeType, OldData, NewData)
-            SELECT 
-                i.IDBOM, 
-                COALESCE(NULLIF(LTRIM(RTRIM(i.Component)), ''), LTRIM(RTRIM(i.BaseMaterial))),
-                'UPDATE',
-                (SELECT d.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER),
-                (SELECT i.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER)
-            FROM inserted i
-            INNER JOIN deleted d ON i.IDBOM = d.IDBOM
-            WHERE (SELECT i.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER) 
-               <> (SELECT d.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER);
-        END
+        INSERT INTO IPTH_BOM_Change_Queue (IDBOM, Component, ChangeType, OldData, NewData)
+        SELECT 
+            i.IDBOM, 
+            COALESCE(NULLIF(LTRIM(RTRIM(i.Component)), ''), LTRIM(RTRIM(i.BaseMaterial))),
+            'UPDATE',
+            (SELECT * FROM deleted d2 WHERE d2.IDBOM = i.IDBOM FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES),
+            (SELECT * FROM inserted i2 WHERE i2.IDBOM = i.IDBOM FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES)
+        FROM inserted i
+        INNER JOIN deleted d ON i.IDBOM = d.IDBOM
+        WHERE 
+            (SELECT * FROM inserted i2 WHERE i2.IDBOM = i.IDBOM FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES) 
+            <> 
+            (SELECT * FROM deleted d2 WHERE d2.IDBOM = d.IDBOM FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES);
     END
 
     -- 2. Xử lý INSERT
@@ -72,10 +104,10 @@ BEGIN
     BEGIN
         INSERT INTO IPTH_BOM_Change_Queue (IDBOM, Component, ChangeType, NewData)
         SELECT 
-            IDBOM, 
-            COALESCE(NULLIF(LTRIM(RTRIM(Component)), ''), LTRIM(RTRIM(BaseMaterial))),
+            i.IDBOM, 
+            COALESCE(NULLIF(LTRIM(RTRIM(i.Component)), ''), LTRIM(RTRIM(i.BaseMaterial))),
             'INSERT', 
-            (SELECT i.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER)
+            (SELECT * FROM inserted i2 WHERE i2.IDBOM = i.IDBOM FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES)
         FROM inserted i;
     END
 
@@ -84,13 +116,15 @@ BEGIN
     BEGIN
         INSERT INTO IPTH_BOM_Change_Queue (IDBOM, Component, ChangeType, OldData)
         SELECT 
-            IDBOM, 
-            COALESCE(NULLIF(LTRIM(RTRIM(Component)), ''), LTRIM(RTRIM(BaseMaterial))),
+            d.IDBOM, 
+            COALESCE(NULLIF(LTRIM(RTRIM(d.Component)), ''), LTRIM(RTRIM(d.BaseMaterial))),
             'DELETE', 
-            (SELECT d.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER)
+            (SELECT * FROM deleted d2 WHERE d2.IDBOM = d.IDBOM FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES)
         FROM deleted d;
     END
 END;
+PRINT 'Created trigger TRG_IPTH_BOM_Deep_Capture.';
+GO
 -*-------------------------------------------------------------
 
 Cần tạo bảng lưu tool đồ thị của db engine:
