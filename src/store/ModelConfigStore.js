@@ -45,21 +45,24 @@ const useModelConfigStore = create((set, get) => ({
   // =====================================
   // 2. MANAGER: FETCH TỪ DB HOẶC ERP
   // =====================================
+  // =====================================
+  // 2. MANAGER: FETCH TỪ DB HOẶC ERP
+  // =====================================
   fetchConfigOrBom: async (partNo) => {
     set({ isLoading: true });
     try {
       let dbRes = null;
       try {
-        const res = await modelConfigAPI.getModelByNo(partNo);
-        if (res && res.routingData && Object.keys(res.routingData).length > 0) {
-          dbRes = res;
+        const configRes = await modelConfigAPI.getModelByNo(partNo);
+        if (configRes && configRes.routingData && Object.keys(configRes.routingData).length > 0) {
+          dbRes = configRes;
         }
       } catch (e) {
         console.log("Model chưa có trong DB, kéo mới hoàn toàn từ ERP...");
       }
 
-      const res = await bomAPI.getLazyBOM(partNo);
-      const rawBom = res.data || [];
+      const bomRes = await bomAPI.getLazyBOM(partNo);
+      const rawBom = bomRes.data || [];
 
       if (dbRes) {
         const rData = dbRes.routingData;
@@ -68,10 +71,16 @@ const useModelConfigStore = create((set, get) => ({
 
         const applySavedRules = (nodes) => {
           nodes.forEach(node => {
+            // NẾU LÀ MÃ MỚI (CHƯA CÓ TRONG CONFIG CŨ) -> AUTO-FILL PN VÀO FIXED STRING
             if (!initialRules[node.Component]) {
-              // [ĐÃ CẬP NHẬT]: Thêm isWildcard và wildcardLength vào Default State
               initialRules[node.Component] = {
-                role: 'STANDARD', scanType: 'IGNORE', fixedString: '', boxQTY: '0', mode: null, isWildcard: false, wildcardLength: ''
+                role: 'STANDARD', 
+                scanType: 'IGNORE', 
+                fixedString: node.Component, // <--- AUTO FILL
+                boxQTY: '0', 
+                mode: null, 
+                isWildcard: false, 
+                wildcardLength: ''
               };
             }
             if (node.children) applySavedRules(node.children);
@@ -81,7 +90,6 @@ const useModelConfigStore = create((set, get) => ({
 
         set({
           configType: rData.configType || 'PACKING',
-          // [VÁ LỖI OUTSOURCE PN]: Ưu tiên tìm trong jsonData nếu routingData không có (hỗ trợ data cũ)
           outSourcePN: rData.outSourcePN || dbRes.jsonData?.outSourcePN || '', 
           MasterRouting: rawBom, 
           configRules: initialRules,
@@ -104,7 +112,7 @@ const useModelConfigStore = create((set, get) => ({
         const initRules = (nodes, currentLevel = 0) => {
           nodes.forEach(node => {
             let defaultScanType = 'IGNORE', defaultRole = 'STANDARD', defaultMode = null;
-            // ... (Logic set role giữ nguyên) ...
+            
             if (configType === 'PACKING') {
               if (node.MaterialType === 'FERT') { defaultScanType = 'BOX_RULE'; defaultRole = 'PACKING_BOX'; } 
               else if (node.MaterialType === 'HALB') { defaultRole = 'ASSY_LABEL'; defaultScanType = currentLevel === 1 ? 'OUTPUT_MAIN' : 'MAIN_INPUT'; } 
@@ -116,8 +124,17 @@ const useModelConfigStore = create((set, get) => ({
               else if (node.MaterialType === 'ROH') { defaultScanType = 'RAW_QTY'; }
             }
 
-            // [ĐÃ CẬP NHẬT]: Thêm biến Wildcard vào initial config
-            initialRules[node.Component] = { role: defaultRole, scanType: defaultScanType, fixedString: '', boxQTY: node.MaterialType === 'FERT' ? '1' : '0', mode: defaultMode, isWildcard: false, wildcardLength: '' };
+            // MÔI TRƯỜNG TẠO MỚI HOÀN TOÀN -> AUTO-FILL PN VÀO FIXED STRING TẤT CẢ VẬT TƯ
+            initialRules[node.Component] = { 
+                role: defaultRole, 
+                scanType: defaultScanType, 
+                fixedString: node.Component, // <--- AUTO FILL
+                boxQTY: node.MaterialType === 'FERT' ? '1' : '0', 
+                mode: defaultMode, 
+                isWildcard: false, 
+                wildcardLength: '' 
+            };
+            
             if (node.children) initRules(node.children, currentLevel + 1);
           });
         };
@@ -128,6 +145,59 @@ const useModelConfigStore = create((set, get) => ({
     } catch (e) {
       console.error("Error loading data:", e);
       set({ isLoading: false });
+    }
+  },
+
+  // =====================================
+  // 3. LAZY LOAD HALB (VÁ LỖI MẤT CONFIG)
+  // =====================================
+  lazyLoadHalb: async (halbPartNo, nodeRef) => {
+    set(s => ({ isLazyLoading: { ...s.isLazyLoading, [halbPartNo]: true } }));
+    try {
+      const res = await bomAPI.getLazyBOM(halbPartNo);
+      const fetchedNode = res.data[0];
+      
+      if (fetchedNode && fetchedNode.children) {
+        const { configRules, MasterRouting, savedCompactRules } = get();
+        const newRules = { ...configRules };
+        
+        fetchedNode.children.forEach(child => {
+          if (!newRules[child.Component]) {
+             if (savedCompactRules && savedCompactRules[child.Component]) {
+                 // NẾU TRONG CẨM NANG ĐÃ LƯU CÓ MÃ NÀY -> LẤY ĐỒ CŨ (Giữ nguyên user input)
+                 newRules[child.Component] = savedCompactRules[child.Component];
+             } else {
+                 // MÃ MỚI TINH HOẶC CHƯA LƯU -> AUTO-FILL FIXED STRING
+                 newRules[child.Component] = { 
+                     role: 'STANDARD', 
+                     scanType: child.MaterialType === 'ROH' ? 'RAW_QTY' : 'MAIN_INPUT', 
+                     fixedString: child.Component, // <--- AUTO FILL
+                     boxQTY: '0', 
+                     mode: null 
+                 };
+             }
+          }
+        });
+
+        const insertChildren = (nodes) => {
+          for (let i = 0; i < nodes.length; i++) {
+            if (nodes[i].Component === halbPartNo) {
+              nodes[i].children = fetchedNode.children;
+              return true;
+            }
+            if (nodes[i].children && insertChildren(nodes[i].children)) return true;
+          }
+          return false;
+        };
+
+        const newRouting = [...MasterRouting];
+        insertChildren(newRouting);
+        set({ MasterRouting: newRouting, configRules: newRules });
+      }
+    } catch (e) {
+      console.error("Lỗi lazy load", e);
+    } finally {
+      set(s => ({ isLazyLoading: { ...s.isLazyLoading, [halbPartNo]: false } }));
     }
   },
 
@@ -156,7 +226,7 @@ const useModelConfigStore = create((set, get) => ({
              } else {
                  // NẾU LÀ TẠO MỚI HOÀN TOÀN: Sinh luật Default
                  newRules[child.Component] = { 
-                     role: 'STANDARD', scanType: child.MaterialType === 'ROH' ? 'RAW_QTY' : 'MAIN_INPUT', fixedString: '', boxQTY: '0', mode: null 
+                     role: 'STANDARD', scanType: child.MaterialType === 'ROH' ? 'RAW_QTY' : 'MAIN_INPUT', fixedString: child.Component, boxQTY: '0', mode: null 
                  };
              }
           }
