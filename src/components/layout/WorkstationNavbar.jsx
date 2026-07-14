@@ -1,6 +1,6 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
-import { LayoutDashboard, ScanLine, Search, Boxes, Database } from 'lucide-react';
+import { LayoutDashboard, ScanLine, Search, Boxes, Database, Printer, Warehouse } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 const WorkStationNavbar = ({ activeTab, setActiveTab }) => {
@@ -44,6 +44,20 @@ const WorkStationNavbar = ({ activeTab, setActiveTab }) => {
           onClick={() => navigate('/dbengine')} 
           icon={<Database size={18} />} 
           label="Database"
+        />
+
+        <NavTab 
+          active={activeTab === 'print_traveler'} 
+          onClick={() => navigate('/printtraveller')} 
+          icon={<Printer size={18} />}
+          label="Print Traveler"
+        />
+
+        <NavTab 
+          active={activeTab === 'warehouse'} 
+          onClick={() => navigate('/warehouse')} 
+          icon={<Warehouse size={18} />}
+          label="Warehouse"
         />
       </div>
 

@@ -88,7 +88,7 @@ const ActiveJobView = () => {
                     <UserCog className={mode === 'rework' ? 'text-purple-500' : 'text-blue-500'} size={36} />
                 </div>
                 <h1 className="text-3xl sm:text-4xl font-black text-white mb-2 tracking-wide text-center uppercase">MÔI TRƯỜNG SẢN XUẤT</h1>
-                <p className="text-slate-400 text-center">Quản lý chít mã trong quá trình sản xuất</p>
+                <p className="text-slate-400 text-center">Quản lý scan mã trong quá trình sản xuất</p>
                 
                 {mode === 'menu' ? (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full mt-10">
@@ -114,7 +114,7 @@ const ActiveJobView = () => {
                                 type="text" value={scannedWO} 
                                 onChange={(e) => setScannedWO(e.target.value)} 
                                 onKeyDown={(e) => e.key === 'Enter' && handleProcessScan(scannedWO)}
-                                placeholder="Quét hoặc nhập mã WO Packing..." 
+                                placeholder="Quét hoặc nhập mã JOB..." 
                                 className="flex-1 bg-slate-950 border border-slate-600 text-white px-5 py-4 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none text-xl font-mono text-center sm:text-left transition-all" 
                             />
                             <button onClick={() => setShowScanner(true)} className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-4 rounded-2xl font-black flex justify-center items-center gap-2 shadow-lg shadow-blue-900/30 active:scale-95 transition-all">

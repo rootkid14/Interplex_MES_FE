@@ -12,6 +12,8 @@ import AccountManager from './components/login/AccountManager';
 import DefectCodeRegistration from "./pages/DefectCodeRegistration";
 import BomConfig from "./pages/BomConfig"
 import DatabaseEnginePage from "./pages/DatabaseEngine";
+import PrintTravelerTab from "./pages/PrintTraveler";
+import WarehousePage from "./pages/Warehouse";
 
 const ProtectedRoute = ({ isAuthenticated, children }) => {
   if (!isAuthenticated) {
@@ -93,6 +95,24 @@ function App() {
           element={
             <ProtectedRoute isAuthenticated={isAuthenticated}>
               <DatabaseEnginePage/>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/printtraveller"
+          element={
+            <ProtectedRoute isAuthenticated={isAuthenticated}>
+              <PrintTravelerTab/>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/warehouse"
+          element={
+            <ProtectedRoute isAuthenticated={isAuthenticated}>
+              <WarehousePage/>
             </ProtectedRoute>
           }
         />

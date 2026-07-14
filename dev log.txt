@@ -158,3 +158,56 @@ CREATE TABLE Sys_Config_Change_Log (
     IsAcknowledged BIT DEFAULT 0     
 );
 
+
+=============================
+
+CREATE TABLE wip_inventory (
+    id INT IDENTITY(1,1) PRIMARY KEY,
+    batch VARCHAR(100) NOT NULL UNIQUE,
+    qty INT DEFAULT 1,
+    in_date DATETIME DEFAULT GETDATE(),
+    out_date DATETIME NULL,
+    status VARCHAR(20) DEFAULT 'IN_STOCK'
+);
+GO
+
+-- Tạo các Index để tối ưu tốc độ truy vấn và phân trang
+CREATE INDEX idx_batch ON wip_inventory(batch);
+CREATE INDEX idx_status ON wip_inventory(status);
+CREATE INDEX idx_in_date ON wip_inventory(in_date);
+GO
+
+===========================
+Code để sửa lỗi production traveler:
+ALTER PROCEDURE [dbo].[IPTH_Generate_Tracking_No] 
+    @TruckingNumber char(20) output 
+AS 
+BEGIN
+    -- Thêm dòng này để Backend không bị "nhiễu" bởi các thông báo hệ thống
+    SET NOCOUNT ON; 
+
+    DECLARE @so_id1 varchar(14), @so_id2 varchar(14), @loi varchar(150), @ngay varchar(8), 
+            @so_tt int, @i2 int 
+
+    -- ... (giữ nguyên toàn bộ logic cũ bên dưới) ...
+    
+    -- Đảm bảo lệnh SELECT cuối cùng trả về kết quả
+    SELECT @TruckingNumber = TruckingNo FROM IPTH_Trucking_Number
+    
+    RETURN 
+END
+
+ ================================================
+ CREATE TABLE [dbo].[RoutingConfigs] (
+    [START_PN] NVARCHAR(50) NOT NULL,
+    [END_PN] NVARCHAR(50) NOT NULL,
+    [JSON_DATA] NVARCHAR(MAX) NULL,
+    
+    -- Định nghĩa Khóa chính kết hợp (Composite Primary Key)
+    -- Nó vừa đảm bảo khóa chính, vừa đảm bảo tính duy nhất (Unique)
+    -- Không bao giờ có thể tồn tại 2 dòng có cùng cặp (START_PN, END_PN)
+    CONSTRAINT [PK_RoutingConfigs] PRIMARY KEY CLUSTERED (
+        [START_PN] ASC, 
+        [END_PN] ASC
+    )
+);

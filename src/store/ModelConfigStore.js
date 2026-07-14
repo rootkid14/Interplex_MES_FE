@@ -42,9 +42,7 @@ const useModelConfigStore = create((set, get) => ({
   toggleWildcard: (partNo) => set(s => ({ configRules: { ...s.configRules, [partNo]: { ...s.configRules[partNo], isWildcard: !s.configRules[partNo].isWildcard } } })),
   updateWildcardLength: (partNo, len) => set(s => ({ configRules: { ...s.configRules, [partNo]: { ...s.configRules[partNo], wildcardLength: len } } })),
 
-  // =====================================
-  // 2. MANAGER: FETCH TỪ DB HOẶC ERP
-  // =====================================
+
   // =====================================
   // 2. MANAGER: FETCH TỪ DB HOẶC ERP
   // =====================================
