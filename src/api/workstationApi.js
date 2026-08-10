@@ -1,5 +1,4 @@
 import apiClient from "./client";
-console.log("I am a real file")
 export const workstationAPI = {
   /**
    * Gọi API Backend để xác thực mã Lệnh Sản Xuất (WO)
@@ -16,11 +15,25 @@ export const workstationAPI = {
     }
   },
   
+  checkAssyPackingLink: async (assyWo, packingWo) => {
+    const response = await apiClient.post(
+      '/validation/checkAssyPackingLink',
+      {
+        AssyWO: Number(assyWo),
+        PackingWO: Number(packingWo),
+      }
+    );
+    return response.data;
+  },
+
   linkAssyPacking: async (assyWo, packingWo) => {
-    const response = await apiClient.post('/validation/linkAssyPacking', {
-        AssyWO: assyWo,
-        PackingWO: packingWo
-    });
+    const response = await apiClient.post(
+      '/validation/linkAssyPacking',
+      {
+        AssyWO: Number(assyWo),
+        PackingWO: Number(packingWo),
+      }
+    );
     return response.data;
   },
 
@@ -34,10 +47,20 @@ export const workstationAPI = {
   },
 
   logInputMain: async (wo, batchCode) => {
-    //Gọi API này để log vậy liệu inputBatch chính
+    // Gọi API để ghi nhận vật liệu Input Batch chính.
     const response = await apiClient.post('/validation/logInputMain', {
-        WO: wo,
-        Batch: batchCode
+        WO: Number(wo),
+        Batch: String(batchCode).trim()
+    });
+    return response.data;
+  },
+
+  transferInputBatch: async (wo, batchCode, remainingQty) => {
+    // RemainingQTY là phần còn dư được chuyển sang WO mới.
+    const response = await apiClient.post('/validation/transferInputBatch', {
+        WO: Number(wo),
+        Batch: String(batchCode).trim(),
+        RemainingQTY: Number(remainingQty)
     });
     return response.data;
   },
@@ -83,14 +106,114 @@ export const workstationAPI = {
     return response.data;
   },
 
+  // Giữ endpoint cũ cho các màn hình/module chưa migrate.
   logPacking: async (payload) => {
-        const response = await apiClient.post('/packing/logPacking', payload);
-        return response.data;
-    },
-    getLoggedBoxes: async (wo) => {
-        const response = await apiClient.get(`/packing/getLoggedBoxes/${wo}`);
-        return response.data;
-    },
+    const response = await apiClient.post('/packing/logPacking', payload);
+    return response.data;
+  },
+
+  // Scan box hợp lệ -> tạo Box_Status với Status = 0.
+  createPackingBox: async (packingWo, boxId) => {
+    const response = await apiClient.post(
+      '/packing/master/create_box',
+      {
+        PackingWO: Number(packingWo),
+        BoxId: String(boxId).trim(),
+      }
+    );
+    return response.data;
+  },
+
+  // Scan item nào -> commit PackingLogItems ngay item đó.
+  logPackingItem: async (packingWo, boxId, itemCode) => {
+    const response = await apiClient.post(
+      '/packing/master/log_box_item',
+      {
+        PackingWO: Number(packingWo),
+        BoxId: String(boxId).trim(),
+        ItemCode: String(itemCode).trim(),
+      }
+    );
+    return response.data;
+  },
+
+  // Chỉ xác nhận đóng thùng hoặc skip; không gửi lại mảng Items.
+  finishPackingBox: async (payload) => {
+    const response = await apiClient.post(
+      '/packing/master/finish_box',
+      {
+        PackingWO: Number(payload.PackingWO),
+        BoxId: String(payload.BoxId).trim(),
+        PN: String(payload.PN || '').trim(),
+        IsSkipped: Boolean(payload.IsSkipped),
+        SkipReason: String(payload.SkipReason || ''),
+      }
+    );
+    return response.data;
+  },
+
+  removePackingItem: async (packingWo, boxId, itemCode) => {
+    const response = await apiClient.post(
+      '/packing/master/remove_box_item',
+      {
+        PackingWO: Number(packingWo),
+        BoxId: String(boxId).trim(),
+        ItemCode: String(itemCode).trim(),
+      }
+    );
+    return response.data;
+  },
+
+  deleteOpenPackingBox: async (packingWo, boxId) => {
+    const response = await apiClient.post(
+      '/packing/master/delete_open_box',
+      {
+        PackingWO: Number(packingWo),
+        BoxId: String(boxId).trim(),
+      }
+    );
+    return response.data;
+  },
+
+  getOpenPackingBox: async (wo) => {
+    const response = await apiClient.get(
+      `/packing/master/get_open_box/${wo}`
+    );
+    return response.data;
+  },
+
+  // Giữ dữ liệu thùng đã hoàn tất từ Batches_Master/Box_Master,
+  // đồng thời chèn thùng đang làm dở lấy từ Box_Status.
+  getLoggedBoxes: async (wo) => {
+    const [finishedResponse, openResponse] = await Promise.all([
+      apiClient.get(`/packing/getLoggedBoxes/${wo}`),
+      apiClient.get(`/packing/master/get_open_box/${wo}`),
+    ]);
+
+    const finishedResult = finishedResponse.data;
+    const openResult = openResponse.data;
+    const finishedBoxes = finishedResult?.data || [];
+    const openBox = openResult?.data || null;
+
+    return {
+      success: Boolean(
+        finishedResult?.success
+        || openResult?.success
+      ),
+      message: (
+        finishedResult?.message
+        || openResult?.message
+      ),
+      data: openBox
+        ? [
+            openBox,
+            ...finishedBoxes.filter(
+              box => box.id !== openBox.id
+            ),
+          ]
+        : finishedBoxes,
+    };
+  },
 
     updateWOProgress: async (data) => {
         try {
@@ -143,16 +266,37 @@ export const workstationAPI = {
     },
 
 
-    // Quét mã WO để check xem nó thuộc PartNumber nào (Phục vụ ghép Checklist)
+    // API legacy: chỉ đọc PN từ SAP.
     checkAliasWoInfo: async (aliasWo) => {
-      const response = await apiClient.get(`/packing/master/check_alias/${aliasWo}`);
+      const response = await apiClient.get(
+        `/packing/master/check_alias/${aliasWo}`
+      );
       return response.data;
     },
 
-    // Liên kết 1 Alias WO vào Packing Master
+    // API legacy được giữ để tương thích. Backend vẫn revalidate đầy đủ
+    // và không còn nhận PartNumber từ frontend.
+    checkMasterAliasLink: async (payload) => {
+      const response = await apiClient.post(
+        '/packing/master/check_link_alias',
+        {
+          PackingWO: Number(payload.PackingWO),
+          AliasWO: Number(payload.AliasWO),
+          CreatedBy: payload.CreatedBy || null,
+        }
+      );
+      return response.data;
+    },
+
     linkMasterAlias: async (payload) => {
-      // payload: { PackingWO: "...", AliasWO: "...", PartNumber: "..." }
-      const response = await apiClient.post('/packing/master/link_alias', payload);
+      const response = await apiClient.post(
+        '/packing/master/link_alias',
+        {
+          PackingWO: Number(payload.PackingWO),
+          AliasWO: Number(payload.AliasWO),
+          CreatedBy: payload.CreatedBy || null,
+        }
+      );
       return response.data;
     },
 
@@ -170,7 +314,8 @@ export const workstationAPI = {
       return response.data;
     },
 
-    // Chốt lệnh tổng (Sẽ tự động chốt luôn các Alias)
+    // Chốt Packing Master và deactivate linkage.
+    // Backend không tự động đóng trạng thái của Assy WO.
     markMasterDone: async (packingWo) => {
       const response = await apiClient.post('/packing/master/mark_done', { PackingWO: packingWo });
       return response.data;

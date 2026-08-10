@@ -100,6 +100,12 @@ const Sidebar = ({ isSidebarOpen, setIsSidebarOpen }) => {
                           label={t('sidebar.defects', 'Cấu hình mã lỗi')} 
                           onClick={() => navigate('/defects')} 
                       />
+
+                      <SidebarItem 
+                          icon={<FileWarning size={20} />} 
+                          label={t('Smart Repair')} 
+                          onClick={() => navigate('/repair')} 
+                      />
                   </>
               )}
 

@@ -3,9 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { 
     PackageSearch, PackagePlus, PackageMinus, Barcode, 
     ArrowLeft, Search, RefreshCw, CheckCircle2, XCircle, Clock, TableIcon,
-    Loader2, ChevronLeft, ChevronRight, Layers, ChevronDown, Package 
+    Loader2, ChevronLeft, ChevronRight, Layers, ChevronDown, Package,
+    Building2, X
 } from 'lucide-react';
 import { wipAPI } from '../api/wipAPI';
+import useAuthStore from '../store/AuthStore';
 
 const WIP_SCHEMA = [
     { name: 'batch', label: 'Batch No.', type: 'string' },
@@ -16,20 +18,82 @@ const WIP_SCHEMA = [
     { name: 'status', label: 'Status', type: 'string' }
 ];
 
+const DEFAULT_ADMIN_DEPARTMENTS = [
+    'COATING',
+    'MOLDING',
+    'PLATING',
+    'NCT',
+    'STAMPING',
+    'SECONDARY'
+];
+
+const normalizeDepartment = (value) =>
+    String(value || '').trim();
+
+const normalizeDepartmentList = (value) => {
+    if (Array.isArray(value)) {
+        return value.map(normalizeDepartment).filter(Boolean);
+    }
+    if (typeof value === 'string') {
+        return value
+            .split(',')
+            .map(normalizeDepartment)
+            .filter(Boolean);
+    }
+    return [];
+};
+
 const WarehousePage = () => {
     const navigate = useNavigate();
+    const user = useAuthStore(state => state.user);
+
+    const authDepartment = normalizeDepartment(
+        user?.responsible_department
+        || user?.department
+        || user?.Department
+        || user?.Deptment
+        || user?.dept
+    );
+
+    const userRole = normalizeDepartment(
+        user?.role || user?.Role
+    ).toUpperCase();
+
+    const isAdmin = (
+        userRole === 'ADMIN'
+        || userRole === 'SUPERADMIN'
+        || userRole === 'SUPERVISOR'
+    );
+
+    const departmentsFromAuth = normalizeDepartmentList(
+        user?.allowed_departments
+        || user?.allowedDepartments
+        || user?.departments
+        || user?.Departments
+    );
+
+    const departmentOptions = Array.from(
+        new Set([
+            ...departmentsFromAuth,
+            authDepartment,
+            ...(isAdmin ? DEFAULT_ADMIN_DEPARTMENTS : [])
+        ].filter(Boolean))
+    );
 
     // --- STATES ---
     const [activeTab, setActiveTab] = useState('scan'); // 'scan' | 'search' | 'model'
     const [wipData, setWipData] = useState([]);
     const [scanLogs, setScanLogs] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
+    const [responsibleDepartment, setResponsibleDepartment] = useState('');
+    const [pendingDepartment, setPendingDepartment] = useState('');
+    const [isDepartmentModalOpen, setIsDepartmentModalOpen] = useState(false);
 
     // Pagination & Filter (Dùng cho tra cứu dạng phẳng thông thường)
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(50);
     const [pagination, setPagination] = useState({ total_pages: 1, total_records: 0 });
-    const [searchFilters, setSearchFilters] = useState({ batch: '', status: '' });
+    const [searchFilters, setSearchFilters] = useState({ batch: '', status: 'IN_STOCK' });
 
     // Cấu trúc States Kế thừa Khả năng từ BomConfig (Dùng tra cứu Model)
     const [modelSearchInput, setModelSearchInput] = useState('');
@@ -60,6 +124,41 @@ const WarehousePage = () => {
         };
     }, []);
 
+    useEffect(() => {
+        if (!responsibleDepartment && authDepartment) {
+            setResponsibleDepartment(authDepartment);
+            setPendingDepartment(authDepartment);
+        }
+    }, [authDepartment, responsibleDepartment]);
+
+    const openDepartmentModal = () => {
+        setPendingDepartment(
+            responsibleDepartment
+            || authDepartment
+            || departmentOptions[0]
+            || ''
+        );
+        setIsDepartmentModalOpen(true);
+    };
+
+    const confirmDepartmentSwitch = () => {
+        const nextDepartment = normalizeDepartment(pendingDepartment);
+        if (!nextDepartment) return;
+
+        setResponsibleDepartment(nextDepartment);
+        setPage(1);
+        setSearchFilters({ batch: '', status: 'IN_STOCK' });
+        setModelSearchInput('');
+        setGroupedModelData({});
+        setExpandedPNs({});
+        setActiveTab('scan');
+        setIsDepartmentModalOpen(false);
+        addLog(
+            `Đã chuyển Workspace sang: ${nextDepartment}`,
+            'success'
+        );
+    };
+
     // --- API CALLS ---
     const loadData = useCallback(async () => {
         // Chỉ tải dữ liệu bảng chính khi không nằm ở tab Model phân nhóm
@@ -70,7 +169,8 @@ const WarehousePage = () => {
                 page,
                 limit: pageSize,
                 batch: searchFilters.batch,
-                status_filter: searchFilters.status
+                status_filter: searchFilters.status,
+                responsible_department: responsibleDepartment
             });
             setWipData(result.data);
             setPagination(result.pagination);
@@ -79,7 +179,7 @@ const WarehousePage = () => {
         } finally {
             setIsLoading(false);
         }
-    }, [page, pageSize, searchFilters, activeTab]);
+    }, [page, pageSize, searchFilters, activeTab, responsibleDepartment]);
 
     useEffect(() => { loadData(); }, [loadData]);
 
@@ -91,7 +191,14 @@ const WarehousePage = () => {
         }
         setIsLoading(true);
         try {
-            const response = await wipAPI.getByModel(modelSearchInput.trim());
+            if (!responsibleDepartment) {
+                alert("Chưa chọn Responsible Department!");
+                return;
+            }
+            const response = await wipAPI.getByModel(
+                modelSearchInput.trim(),
+                responsibleDepartment
+            );
             if (response.success) {
                 setGroupedModelData(response.grouped_data);
                 setExpandedPNs({}); // Reset trạng thái collapse đóng hết lại khi có kết quả mới
@@ -115,11 +222,25 @@ const WarehousePage = () => {
             const batch = e.target.value.trim();
             e.target.value = '';
             try {
-                await wipAPI.scanIn(batch);
-                addLog(`Nhập thành công lô: ${batch}`, 'success');
+                if (!responsibleDepartment) {
+                    throw new Error("Chưa chọn Responsible Department!");
+                }
+                const result = await wipAPI.scanIn(
+                    batch,
+                    responsibleDepartment
+                );
+                addLog(
+                    `Nhập ${result?.data?.qty ?? '-'} PCS | ${batch} | ${responsibleDepartment}`,
+                    'success'
+                );
                 loadData(); 
             } catch (err) {
-                addLog(err.response?.data?.detail || "Lỗi xử lý luồng nhập kho!", "error");
+                addLog(
+                    err.response?.data?.detail
+                    || err.message
+                    || "Lỗi xử lý luồng nhập kho!",
+                    "error"
+                );
             }
         }
     };
@@ -129,11 +250,25 @@ const WarehousePage = () => {
             const batch = e.target.value.trim();
             e.target.value = '';
             try {
-                await wipAPI.scanOut(batch);
-                addLog(`Xuất thành công lô: ${batch}`, 'success');
+                if (!responsibleDepartment) {
+                    throw new Error("Chưa chọn Responsible Department!");
+                }
+                await wipAPI.scanOut(
+                    batch,
+                    responsibleDepartment
+                );
+                addLog(
+                    `Xuất thành công lô: ${batch} | ${responsibleDepartment}`,
+                    'success'
+                );
                 loadData();
             } catch (err) {
-                addLog(err.response?.data?.detail || "Lỗi xử lý luồng xuất kho!", "error");
+                addLog(
+                    err.response?.data?.detail
+                    || err.message
+                    || "Lỗi xử lý luồng xuất kho!",
+                    "error"
+                );
             }
         }
     };
@@ -154,6 +289,36 @@ const WarehousePage = () => {
                     <div className="bg-emerald-600/20 p-2 rounded-lg"><PackageSearch className="text-emerald-500" size={20} /></div>
                     <h1 className="text-xl font-black text-white uppercase tracking-widest">WIP Warehouse</h1>
                 </div>
+
+            </div>
+
+            {/* WORKSPACE CONTEXT - luôn hiển thị rõ department đang chịu trách nhiệm */}
+            <div className="bg-blue-950/40 border-b border-blue-500/30 px-6 py-3 flex items-center justify-between gap-4 shrink-0">
+                <div className="flex items-center gap-4 min-w-0">
+                    <div className="p-2.5 bg-blue-500/10 border border-blue-500/30 rounded-xl shrink-0">
+                        <Building2 size={24} className="text-blue-300" />
+                    </div>
+                    <div className="min-w-0">
+                        <p className="text-[10px] uppercase tracking-[0.25em] text-blue-400 font-black">Current Workspace</p>
+                        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mt-0.5">
+                            <h2 className={`text-2xl font-black tracking-wide ${responsibleDepartment ? 'text-white' : 'text-rose-400'}`}>
+                                {responsibleDepartment || 'CHƯA THIẾT LẬP'}
+                            </h2>
+                            <span className="text-xs text-slate-400">
+                                Mọi Scan IN/OUT, Search và Tồn theo Model đều chỉ áp dụng trong workspace này.
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
+                <button
+                    onClick={openDepartmentModal}
+                    className="shrink-0 flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-5 py-3 rounded-xl font-black tracking-wider shadow-lg transition-colors"
+                    title="Chuyển Responsible Department workspace"
+                >
+                    SWITCH WORKSPACE
+                    <ChevronDown size={18} />
+                </button>
             </div>
 
             {/* MAIN CONTENT */}
@@ -175,13 +340,21 @@ const WarehousePage = () => {
                     <div className="flex-1 overflow-auto p-5">
                         {activeTab === 'scan' && (
                             <div className="space-y-6">
+                                {!responsibleDepartment && (
+                                    <button
+                                        onClick={openDepartmentModal}
+                                        className="w-full p-3 bg-rose-500/10 border border-rose-500/40 text-rose-300 rounded-lg text-sm font-bold"
+                                    >
+                                        Chọn Responsible Department trước khi scan
+                                    </button>
+                                )}
                                 <div>
                                     <label className="text-xs font-bold text-emerald-400 mb-2 block uppercase tracking-widest">Scan IN</label>
-                                    <input onKeyDown={handleScanIn} ref={scanInRef} className="w-full bg-slate-950 border border-slate-700 p-3 rounded-lg text-white outline-none font-mono focus:border-emerald-500 shadow-inner" placeholder="Quét mã batch nhập kho..." />
+                                    <input onKeyDown={handleScanIn} ref={scanInRef} disabled={!responsibleDepartment} className="w-full bg-slate-950 border border-slate-700 p-3 rounded-lg text-white outline-none font-mono focus:border-emerald-500 shadow-inner" placeholder="Quét mã batch nhập kho..." />
                                 </div>
                                 <div>
                                     <label className="text-xs font-bold text-rose-400 mb-2 block uppercase tracking-widest">Scan OUT</label>
-                                    <input onKeyDown={handleScanOut} ref={scanOutRef} className="w-full bg-slate-950 border border-slate-700 p-3 rounded-lg text-white outline-none font-mono focus:border-rose-500 shadow-inner" placeholder="Quét mã batch xuất kho..." />
+                                    <input onKeyDown={handleScanOut} ref={scanOutRef} disabled={!responsibleDepartment} className="w-full bg-slate-950 border border-slate-700 p-3 rounded-lg text-white outline-none font-mono focus:border-rose-500 shadow-inner" placeholder="Quét mã batch xuất kho..." />
                                 </div>
                                 <div className="space-y-2 pt-4 border-t border-slate-800">
                                     <span className="text-[10px] text-slate-500 font-bold block uppercase tracking-widest">Nhật ký trạm quét</span>
@@ -199,11 +372,29 @@ const WarehousePage = () => {
 
                         {activeTab === 'search' && (
                             <div className="space-y-4">
+                                <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg text-xs text-blue-300">
+                                    Đang tra cứu trong Workspace: <b>{responsibleDepartment || '-'}</b>
+                                </div>
                                 <div>
                                     <label className="text-xs font-bold text-slate-400 mb-2 block uppercase">Mã Số Lô (Batch No.)</label>
                                     <input value={searchFilters.batch} onChange={(e) => setSearchFilters({...searchFilters, batch: e.target.value})} className="w-full bg-slate-950 border border-slate-700 p-3 rounded-lg text-white font-mono outline-none focus:border-blue-500" placeholder="Nhập ký tự tìm kiếm..."/>
                                 </div>
-                                <button onClick={loadData} className="w-full bg-blue-600 hover:bg-blue-500 text-white p-3 rounded-lg font-bold transition-colors shadow">TÌM KIẾM HỆ THỐNG</button>
+                                <div>
+                                    <label className="text-xs font-bold text-slate-400 mb-2 block uppercase">Trạng thái</label>
+                                    <select
+                                        value={searchFilters.status}
+                                        onChange={(e) => {
+                                            setSearchFilters({...searchFilters, status: e.target.value});
+                                            setPage(1);
+                                        }}
+                                        className="w-full bg-slate-950 border border-slate-700 p-3 rounded-lg text-white outline-none focus:border-blue-500"
+                                    >
+                                        <option value="IN_STOCK">Đang chịu trách nhiệm (IN_STOCK)</option>
+                                        <option value="OUT">Đã chuyển ra (OUT)</option>
+                                        <option value="">Tất cả lịch sử của workspace</option>
+                                    </select>
+                                </div>
+                                <button onClick={loadData} className="w-full bg-blue-600 hover:bg-blue-500 text-white p-3 rounded-lg font-bold transition-colors shadow">TÌM KIẾM TRONG WORKSPACE</button>
                             </div>
                         )}
 
@@ -348,6 +539,69 @@ const WarehousePage = () => {
                     )}
                 </div>
             </div>
+
+            {isDepartmentModalOpen && (
+                <div className="fixed inset-0 z-[100] bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4">
+                    <div className="w-full max-w-md bg-slate-900 border border-blue-500/40 rounded-2xl shadow-2xl overflow-hidden">
+                        <div className="p-5 border-b border-slate-800 flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                                <Building2 className="text-blue-400" size={22} />
+                                <div>
+                                    <h2 className="text-white font-black">Switch Workspace</h2>
+                                    <p className="text-xs text-slate-500 mt-1">
+                                        Chuyển toàn bộ màn hình WIP sang workspace của department đã chọn.
+                                    </p>
+                                </div>
+                            </div>
+                            <button onClick={() => setIsDepartmentModalOpen(false)} className="text-slate-500 hover:text-white">
+                                <X size={22} />
+                            </button>
+                        </div>
+
+                        <div className="p-5">
+                            {departmentOptions.length > 0 ? (
+                                <select
+                                    value={pendingDepartment}
+                                    onChange={(e) => setPendingDepartment(e.target.value)}
+                                    className="w-full bg-slate-950 border border-slate-700 text-white p-3 rounded-lg outline-none focus:border-blue-500 font-bold"
+                                >
+                                    {departmentOptions.map(department => (
+                                        <option key={department} value={department}>
+                                            {department}
+                                        </option>
+                                    ))}
+                                </select>
+                            ) : (
+                                <div className="p-4 bg-rose-500/10 border border-rose-500/30 text-rose-300 rounded-lg text-sm">
+                                    Authentication response chưa có department hoặc allowed_departments.
+                                </div>
+                            )}
+
+                            <div className="mt-4 p-3 bg-slate-950 rounded-lg border border-slate-800 text-xs text-slate-400">
+                                Login: <span className="text-white font-bold">{user?.name || user?.username || user?.id || '-'}</span>
+                                <br />
+                                Workspace mặc định từ Authentication: <span className="text-blue-300 font-bold">{authDepartment || '-'}</span>
+                            </div>
+
+                            <div className="flex gap-3 mt-6">
+                                <button
+                                    onClick={() => setIsDepartmentModalOpen(false)}
+                                    className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-white rounded-lg font-bold"
+                                >
+                                    HỦY
+                                </button>
+                                <button
+                                    onClick={confirmDepartmentSwitch}
+                                    disabled={!pendingDepartment}
+                                    className="flex-1 py-3 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white rounded-lg font-black"
+                                >
+                                    XÁC NHẬN
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

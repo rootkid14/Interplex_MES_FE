@@ -211,3 +211,994 @@ END
         [END_PN] ASC
     )
 );
+
+
+====================================== JUl 20 ================================================
+Update the 1 Batch - Multiple WO functionalities:
+
+Step 1: 
+Add a new table called "Batches_Consumption_Log"
+/* =========================================================
+   STEP 1: CREATE TABLE Batches_Consumption_Log
+   ========================================================= */
+
+SET XACT_ABORT ON;
+
+BEGIN TRY
+    BEGIN TRANSACTION;
+
+    IF OBJECT_ID(
+        N'dbo.Batches_Consumption_Log',
+        N'U'
+    ) IS NULL
+    BEGIN
+        CREATE TABLE dbo.Batches_Consumption_Log
+        (
+            ID bigint IDENTITY(1,1) NOT NULL,
+
+            Batch_ID bigint NOT NULL,
+
+            Used_by_WO bigint NOT NULL,
+
+            Used_QTY int NOT NULL,
+
+            Used_time datetime2(7) NOT NULL
+                CONSTRAINT DF_Batches_Consumption_Log_UsedTime
+                DEFAULT SYSUTCDATETIME(),
+
+            IsCurrent bit NOT NULL
+                CONSTRAINT DF_Batches_Consumption_Log_IsCurrent
+                DEFAULT 1,
+
+            CONSTRAINT PK_Batches_Consumption_Log
+                PRIMARY KEY CLUSTERED (ID),
+
+            CONSTRAINT FK_Batches_Consumption_Log_Batch
+                FOREIGN KEY (Batch_ID)
+                REFERENCES dbo.Batches_Master(ID),
+
+            CONSTRAINT CK_Batches_Consumption_Log_UsedQTY
+                CHECK (Used_QTY > 0)
+        );
+    END;
+
+    COMMIT TRANSACTION;
+END TRY
+BEGIN CATCH
+    IF @@TRANCOUNT > 0
+        ROLLBACK TRANSACTION;
+
+    THROW;
+END CATCH;
+
+/* Tăng tốc load vật liệu theo WO */
+IF NOT EXISTS
+(
+    SELECT 1
+    FROM sys.indexes
+    WHERE object_id =
+        OBJECT_ID(N'dbo.Batches_Consumption_Log')
+      AND name =
+        N'IX_Batches_Consumption_Log_UsedWO'
+)
+BEGIN
+    CREATE INDEX IX_Batches_Consumption_Log_UsedWO
+    ON dbo.Batches_Consumption_Log
+    (
+        Used_by_WO,
+        Used_time DESC,
+        ID DESC
+    )
+    INCLUDE
+    (
+        Batch_ID,
+        Used_QTY,
+        IsCurrent
+    );
+END;
+
+/* Tăng tốc tìm toàn bộ lịch sử của một Batch */
+IF NOT EXISTS
+(
+    SELECT 1
+    FROM sys.indexes
+    WHERE object_id =
+        OBJECT_ID(N'dbo.Batches_Consumption_Log')
+      AND name =
+        N'IX_Batches_Consumption_Log_Batch'
+)
+BEGIN
+    CREATE INDEX IX_Batches_Consumption_Log_Batch
+    ON dbo.Batches_Consumption_Log
+    (
+        Batch_ID,
+        Used_time DESC,
+        ID DESC
+    )
+    INCLUDE
+    (
+        Used_by_WO,
+        Used_QTY,
+        IsCurrent
+    );
+END;
+
+/* Một Batch chỉ được có tối đa một dòng đang giữ phần dư */
+IF NOT EXISTS
+(
+    SELECT 1
+    FROM sys.indexes
+    WHERE object_id =
+        OBJECT_ID(N'dbo.Batches_Consumption_Log')
+      AND name =
+        N'UX_Batches_Consumption_Log_Current'
+)
+BEGIN
+    CREATE UNIQUE INDEX UX_Batches_Consumption_Log_Current
+    ON dbo.Batches_Consumption_Log(Batch_ID)
+    WHERE IsCurrent = 1;
+END;
+
+
+**************** STEP 2: Migration the old usage data from batches_master to Batches_Consumption_Log
+Audit first to see if there is some invalid data, if yes, need to find way on how to manually deal with these cases.:
+SELECT
+    ID,
+    Batch,
+    QTY,
+    Used_by_WO,
+    Used_time
+FROM dbo.Batches_Master
+WHERE Used_by_WO IS NOT NULL
+  AND
+  (
+      QTY IS NULL
+      OR QTY <= 0
+  );
+
+SELECT
+    ID,
+    Batch,
+    QTY,
+    Used_by_WO,
+    Used_time,
+    Born_time
+FROM dbo.Batches_Master
+WHERE Used_by_WO IS NOT NULL
+  AND Used_time IS NULL;
+
+
+After Auditing, run the migration script:
+SET XACT_ABORT ON;
+
+BEGIN TRY
+    BEGIN TRANSACTION;
+
+    IF OBJECT_ID(
+        N'dbo.Batches_Consumption_Log',
+        N'U'
+    ) IS NULL
+    BEGIN
+        THROW 50001,
+            'Batches_Consumption_Log does not exist.',
+            1;
+    END;
+
+    INSERT INTO dbo.Batches_Consumption_Log
+    (
+        Batch_ID,
+        Used_by_WO,
+        Used_QTY,
+        Used_time,
+        IsCurrent
+    )
+    SELECT
+        B.ID,
+        B.Used_by_WO,
+        B.QTY,
+        COALESCE
+        (
+            B.Used_time,
+            B.Born_time,
+            SYSUTCDATETIME()
+        ),
+        1
+    FROM dbo.Batches_Master B
+    WHERE B.Used_by_WO IS NOT NULL
+      AND B.QTY > 0
+      AND NOT EXISTS
+      (
+          SELECT 1
+          FROM dbo.Batches_Consumption_Log C
+          WHERE C.Batch_ID = B.ID
+      );
+
+    COMMIT TRANSACTION;
+END TRY
+BEGIN CATCH
+    IF @@TRANCOUNT > 0
+        ROLLBACK TRANSACTION;
+
+    THROW;
+END CATCH;
+
+*********** STEP 3: CLEAN UP THE OLD Batches_Master table to drop 2 now un-used columns:
+USE [IPTHData_Dev];
+GO
+
+SET XACT_ABORT ON;
+
+BEGIN TRY
+    BEGIN TRANSACTION;
+
+    /* 1. Kiểm tra migration đã đầy đủ chưa */
+    IF EXISTS
+    (
+        SELECT 1
+        FROM dbo.Batches_Master B
+        WHERE B.Used_by_WO IS NOT NULL
+          AND NOT EXISTS
+          (
+              SELECT 1
+              FROM dbo.Batches_Consumption_Log C
+              WHERE C.Batch_ID = B.ID
+          )
+    )
+    BEGIN
+        THROW 50003,
+            'Cannot drop legacy columns because migration is incomplete.',
+            1;
+    END;
+
+    /* 2. Drop index đang phụ thuộc vào Used_by_WO */
+    IF EXISTS
+    (
+        SELECT 1
+        FROM sys.indexes
+        WHERE object_id = OBJECT_ID(N'dbo.Batches_Master')
+          AND name = N'IX_Batches_Master_UsedWO'
+    )
+    BEGIN
+        DROP INDEX IX_Batches_Master_UsedWO
+        ON dbo.Batches_Master;
+    END;
+
+    /* 3. Drop cột Used_by_WO */
+    IF COL_LENGTH(
+        'dbo.Batches_Master',
+        'Used_by_WO'
+    ) IS NOT NULL
+    BEGIN
+        ALTER TABLE dbo.Batches_Master
+        DROP COLUMN Used_by_WO;
+    END;
+
+    /* 4. Drop cột Used_time */
+    IF COL_LENGTH(
+        'dbo.Batches_Master',
+        'Used_time'
+    ) IS NOT NULL
+    BEGIN
+        ALTER TABLE dbo.Batches_Master
+        DROP COLUMN Used_time;
+    END;
+
+    COMMIT TRANSACTION;
+END TRY
+BEGIN CATCH
+    IF @@TRANCOUNT > 0
+        ROLLBACK TRANSACTION;
+
+    THROW;
+END CATCH;
+
+
+============================================= UPDATE: NEW WORKFLOW FOR ASSY_PACKING LINKAGE PIPELINE====================================
+task: Remove activities on assy jobs, assy jobs are now merely acts as data to log and alias to link to packing jobs.
+step 1: update the AssyPackingLinkage table to remove unique constraint on AssyWO column and add a IsActive column
+BEGIN TRANSACTION;
+
+-- 1. Gỡ Primary Key cũ khỏi AssyWO
+ALTER TABLE dbo.AssyPackingLinkage
+DROP CONSTRAINT PK__AssyPack__ACACF6C565926A65;
+
+-- 2. Thêm khóa chính mới và trạng thái active
+ALTER TABLE dbo.AssyPackingLinkage
+ADD
+    ID bigint IDENTITY(1,1) NOT NULL,
+    IsActive bit NOT NULL
+        CONSTRAINT DF_AssyPackingLinkage_IsActive
+        DEFAULT (0);
+
+-- 3. Chuyển ID thành Primary Key
+ALTER TABLE dbo.AssyPackingLinkage
+ADD CONSTRAINT PK_AssyPackingLinkage
+PRIMARY KEY CLUSTERED (ID);
+
+-- 4. Một Assy WO chỉ được có một Packing WO active tại một thời điểm
+CREATE UNIQUE NONCLUSTERED INDEX UX_AssyPackingLinkage_ActiveAssy
+ON dbo.AssyPackingLinkage (AssyWO)
+WHERE IsActive = 1;
+
+COMMIT TRANSACTION;
+
+
+====================================== CREATE BOX STATUS STABLE ===========================================
+
+/*
+Box_Status:
+- Status = 0: thùng đang đóng
+- Status = 1: thùng đã hoàn tất
+- WO là cột bắt buộc để tìm thùng đang mở theo Work Order.
+*/
+
+IF OBJECT_ID(N'dbo.Box_Status', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.Box_Status
+    (
+        Box_ID      nvarchar(200) NOT NULL,
+        WO          bigint        NOT NULL,
+        Model       nvarchar(200) NOT NULL,
+        Create_Date datetime2(7)  NOT NULL
+            CONSTRAINT DF_Box_Status_Create_Date
+            DEFAULT SYSUTCDATETIME(),
+        Status      tinyint       NOT NULL
+            CONSTRAINT DF_Box_Status_Status
+            DEFAULT (0),
+
+        CONSTRAINT PK_Box_Status
+            PRIMARY KEY CLUSTERED (Box_ID),
+
+        CONSTRAINT CK_Box_Status_Status
+            CHECK (Status IN (0, 1))
+    );
+
+    CREATE NONCLUSTERED INDEX IX_Box_Status_WO_Status_Date
+    ON dbo.Box_Status
+    (
+        WO,
+        Status,
+        Create_Date DESC
+    )
+    INCLUDE
+    (
+        Box_ID,
+        Model
+    );
+
+    -- UI hiện chỉ cho phép một thùng đang mở cho mỗi Packing WO.
+    CREATE UNIQUE NONCLUSTERED INDEX UX_Box_Status_Open_WO
+    ON dbo.Box_Status (WO)
+    WHERE Status = 0;
+END;
+
+===================================== MODIFY wip_inventory TABLE =========================
+SET XACT_ABORT ON;
+
+BEGIN TRY
+    BEGIN TRANSACTION;
+
+    /* Thêm cột Responsible Department */
+    IF COL_LENGTH(
+        'dbo.wip_inventory',
+        'responsible_department'
+    ) IS NULL
+    BEGIN
+        ALTER TABLE dbo.wip_inventory
+        ADD responsible_department nvarchar(100) NULL;
+    END;
+
+    /* Default chỉ áp dụng cho các record mới không truyền department */
+    IF NOT EXISTS
+    (
+        SELECT 1
+        FROM sys.default_constraints dc
+        INNER JOIN sys.columns c
+            ON c.object_id = dc.parent_object_id
+           AND c.column_id = dc.parent_column_id
+        WHERE dc.parent_object_id
+            = OBJECT_ID('dbo.wip_inventory')
+          AND c.name = 'responsible_department'
+    )
+    BEGIN
+        ALTER TABLE dbo.wip_inventory
+        ADD CONSTRAINT
+            DF_wip_inventory_responsible_department
+        DEFAULT ('UNASSIGNED')
+        FOR responsible_department;
+    END;
+
+    COMMIT TRANSACTION;
+END TRY
+BEGIN CATCH
+    IF @@TRANCOUNT > 0
+        ROLLBACK TRANSACTION;
+
+    THROW;
+END CATCH;
+
+
+==================================== MODIFY THE wip_inventory table to change the uniqueness of batch to unique in side department only ======
+/*
+WIP Warehouse - Department Workspace schema update
+
+Current target design:
+- id remains the table primary key.
+- batch is NOT globally unique.
+- business uniqueness becomes (batch, responsible_department).
+- no data migration/backfill is performed by this script.
+
+Compatible with the current schema shared by the user:
+    id int PK
+    batch varchar(100)
+    responsible_department nvarchar(100)
+*/
+
+SET NOCOUNT ON;
+SET XACT_ABORT ON;
+GO
+
+IF OBJECT_ID(N'dbo.wip_inventory', N'U') IS NULL
+BEGIN
+    RAISERROR('Table dbo.wip_inventory does not exist.', 16, 1);
+    RETURN;
+END;
+GO
+
+IF COL_LENGTH(N'dbo.wip_inventory', N'responsible_department') IS NULL
+BEGIN
+    RAISERROR('Column responsible_department does not exist. Add it before running this script.', 16, 1);
+    RETURN;
+END;
+GO
+
+/* ---------------------------------------------------------
+   1. Refuse to continue if duplicate business keys already
+      exist. This script intentionally does not migrate data.
+   --------------------------------------------------------- */
+IF EXISTS
+(
+    SELECT 1
+    FROM dbo.wip_inventory
+    GROUP BY batch, responsible_department
+    HAVING COUNT(*) > 1
+)
+BEGIN
+    RAISERROR(
+        'Duplicate (batch, responsible_department) rows already exist. Resolve them before creating the workspace unique index.',
+        16,
+        1
+    );
+    RETURN;
+END;
+GO
+
+/* ---------------------------------------------------------
+   2. Drop UNIQUE CONSTRAINT(s) whose only key column is batch.
+      This handles auto-generated constraint names safely.
+   --------------------------------------------------------- */
+DECLARE @ConstraintName sysname;
+DECLARE @Sql nvarchar(max);
+
+WHILE 1 = 1
+BEGIN
+    SET @ConstraintName = NULL;
+
+    SELECT TOP 1
+        @ConstraintName = kc.name
+    FROM sys.key_constraints kc
+    WHERE kc.parent_object_id = OBJECT_ID(N'dbo.wip_inventory')
+      AND kc.[type] = N'UQ'
+      AND
+      (
+          SELECT COUNT(*)
+          FROM sys.index_columns ic
+          WHERE ic.object_id = kc.parent_object_id
+            AND ic.index_id = kc.unique_index_id
+            AND ic.is_included_column = 0
+      ) = 1
+      AND EXISTS
+      (
+          SELECT 1
+          FROM sys.index_columns ic
+          INNER JOIN sys.columns c
+              ON c.object_id = ic.object_id
+             AND c.column_id = ic.column_id
+          WHERE ic.object_id = kc.parent_object_id
+            AND ic.index_id = kc.unique_index_id
+            AND ic.is_included_column = 0
+            AND c.name = N'batch'
+      );
+
+    IF @ConstraintName IS NULL
+        BREAK;
+
+    SET @Sql =
+        N'ALTER TABLE dbo.wip_inventory DROP CONSTRAINT '
+        + QUOTENAME(@ConstraintName)
+        + N';';
+
+    EXEC sys.sp_executesql @Sql;
+END;
+GO
+
+/* ---------------------------------------------------------
+   3. Drop standalone UNIQUE INDEX(es) whose only key column
+      is batch. Normal idx_batch is intentionally preserved.
+   --------------------------------------------------------- */
+DECLARE @IndexName sysname;
+DECLARE @Sql nvarchar(max);
+
+WHILE 1 = 1
+BEGIN
+    SET @IndexName = NULL;
+
+    SELECT TOP 1
+        @IndexName = i.name
+    FROM sys.indexes i
+    WHERE i.object_id = OBJECT_ID(N'dbo.wip_inventory')
+      AND i.is_unique = 1
+      AND i.is_primary_key = 0
+      AND i.is_unique_constraint = 0
+      AND
+      (
+          SELECT COUNT(*)
+          FROM sys.index_columns ic
+          WHERE ic.object_id = i.object_id
+            AND ic.index_id = i.index_id
+            AND ic.is_included_column = 0
+      ) = 1
+      AND EXISTS
+      (
+          SELECT 1
+          FROM sys.index_columns ic
+          INNER JOIN sys.columns c
+              ON c.object_id = ic.object_id
+             AND c.column_id = ic.column_id
+          WHERE ic.object_id = i.object_id
+            AND ic.index_id = i.index_id
+            AND ic.is_included_column = 0
+            AND c.name = N'batch'
+      );
+
+    IF @IndexName IS NULL
+        BREAK;
+
+    SET @Sql =
+        N'DROP INDEX '
+        + QUOTENAME(@IndexName)
+        + N' ON dbo.wip_inventory;';
+
+    EXEC sys.sp_executesql @Sql;
+END;
+GO
+
+/* Remove the older experimental rule if it exists. */
+IF EXISTS
+(
+    SELECT 1
+    FROM sys.indexes
+    WHERE object_id = OBJECT_ID(N'dbo.wip_inventory')
+      AND name = N'UX_wip_inventory_ActiveBatchDepartment'
+)
+BEGIN
+    DROP INDEX UX_wip_inventory_ActiveBatchDepartment
+    ON dbo.wip_inventory;
+END;
+GO
+
+/* ---------------------------------------------------------
+   4. Business uniqueness: one batch row per department.
+      Same batch may exist in different department workspaces.
+   --------------------------------------------------------- */
+IF NOT EXISTS
+(
+    SELECT 1
+    FROM sys.indexes
+    WHERE object_id = OBJECT_ID(N'dbo.wip_inventory')
+      AND name = N'UX_wip_inventory_Batch_Department'
+)
+BEGIN
+    CREATE UNIQUE NONCLUSTERED INDEX
+        UX_wip_inventory_Batch_Department
+    ON dbo.wip_inventory
+    (
+        batch,
+        responsible_department
+    );
+END;
+GO
+
+/* ---------------------------------------------------------
+   5. Query-performance index for workspace views.
+   --------------------------------------------------------- */
+IF NOT EXISTS
+(
+    SELECT 1
+    FROM sys.indexes
+    WHERE object_id = OBJECT_ID(N'dbo.wip_inventory')
+      AND name = N'IX_wip_inventory_Workspace_Status_Date'
+)
+BEGIN
+    CREATE NONCLUSTERED INDEX
+        IX_wip_inventory_Workspace_Status_Date
+    ON dbo.wip_inventory
+    (
+        responsible_department,
+        [status],
+        in_date DESC
+    )
+    INCLUDE
+    (
+        id,
+        batch,
+        PN,
+        qty,
+        out_date
+    );
+END;
+GO
+
+/* ---------------------------------------------------------
+   Verification
+   --------------------------------------------------------- */
+SELECT
+    i.name AS IndexName,
+    i.is_primary_key,
+    i.is_unique,
+    i.is_unique_constraint,
+    i.has_filter,
+    i.filter_definition
+FROM sys.indexes i
+WHERE i.object_id = OBJECT_ID(N'dbo.wip_inventory')
+  AND i.name IS NOT NULL
+ORDER BY
+    i.is_primary_key DESC,
+    i.is_unique DESC,
+    i.name;
+GO
+
+SELECT
+    i.name AS IndexName,
+    c.name AS ColumnName,
+    ic.key_ordinal
+FROM sys.indexes i
+INNER JOIN sys.index_columns ic
+    ON ic.object_id = i.object_id
+   AND ic.index_id = i.index_id
+INNER JOIN sys.columns c
+    ON c.object_id = ic.object_id
+   AND c.column_id = ic.column_id
+WHERE i.object_id = OBJECT_ID(N'dbo.wip_inventory')
+  AND ic.is_included_column = 0
+  AND i.name IN
+  (
+      N'UX_wip_inventory_Batch_Department',
+      N'IX_wip_inventory_Workspace_Status_Date'
+  )
+ORDER BY i.name, ic.key_ordinal;
+GO
+
+
+============================= ADD "created_at" columns to message logs table for autocleaner function ===========================
+
+/*
+    Notification/log cleanup timestamp setup
+
+    Tables:
+      1. dbo.DefectsLog
+      2. dbo.Master_WO_Message
+      3. dbo.IPTH_BOM_Change_Queue
+
+    Policy:
+      - CreatedAt is populated automatically by SQL Server.
+      - UTC is used for all new timestamps.
+      - Existing rows without a timestamp are assigned the deployment time,
+        so they are not deleted immediately after deployment.
+
+    Run this script once in the target MES database.
+*/
+
+SET NOCOUNT ON;
+SET XACT_ABORT ON;
+GO
+
+/* ============================================================
+   1. DefectsLog
+   Current schema has no timestamp.
+   ============================================================ */
+
+IF OBJECT_ID(N'dbo.DefectsLog', N'U') IS NULL
+BEGIN
+    RAISERROR('Table dbo.DefectsLog was not found.', 16, 1);
+    RETURN;
+END;
+GO
+
+IF COL_LENGTH(N'dbo.DefectsLog', N'CreatedAt') IS NULL
+BEGIN
+    ALTER TABLE dbo.DefectsLog
+    ADD CreatedAt datetime2(3) NOT NULL
+        CONSTRAINT DF_DefectsLog_CreatedAt
+        DEFAULT (SYSUTCDATETIME())
+        WITH VALUES;
+END;
+GO
+
+/* Handle the case where CreatedAt already exists but is nullable. */
+UPDATE dbo.DefectsLog
+SET CreatedAt = SYSUTCDATETIME()
+WHERE CreatedAt IS NULL;
+GO
+
+IF EXISTS
+(
+    SELECT 1
+    FROM sys.columns
+    WHERE object_id = OBJECT_ID(N'dbo.DefectsLog')
+      AND name = N'CreatedAt'
+      AND is_nullable = 1
+)
+BEGIN
+    ALTER TABLE dbo.DefectsLog
+    ALTER COLUMN CreatedAt datetime2(3) NOT NULL;
+END;
+GO
+
+IF NOT EXISTS
+(
+    SELECT 1
+    FROM sys.default_constraints dc
+    INNER JOIN sys.columns c
+        ON c.object_id = dc.parent_object_id
+       AND c.column_id = dc.parent_column_id
+    WHERE dc.parent_object_id = OBJECT_ID(N'dbo.DefectsLog')
+      AND c.name = N'CreatedAt'
+)
+BEGIN
+    ALTER TABLE dbo.DefectsLog
+    ADD CONSTRAINT DF_DefectsLog_CreatedAt
+        DEFAULT (SYSUTCDATETIME()) FOR CreatedAt;
+END;
+GO
+
+IF NOT EXISTS
+(
+    SELECT 1
+    FROM sys.indexes
+    WHERE object_id = OBJECT_ID(N'dbo.DefectsLog')
+      AND name = N'IX_DefectsLog_CreatedAt'
+)
+BEGIN
+    CREATE NONCLUSTERED INDEX IX_DefectsLog_CreatedAt
+    ON dbo.DefectsLog (CreatedAt);
+END;
+GO
+
+
+/* ============================================================
+   2. Master_WO_Message
+   This table is memory-optimized in the current database.
+   ALTER TABLE is therefore also used for its index.
+   ============================================================ */
+
+IF OBJECT_ID(N'dbo.Master_WO_Message', N'U') IS NULL
+BEGIN
+    RAISERROR('Table dbo.Master_WO_Message was not found.', 16, 1);
+    RETURN;
+END;
+GO
+
+IF COL_LENGTH(N'dbo.Master_WO_Message', N'CreatedAt') IS NULL
+BEGIN
+    ALTER TABLE dbo.Master_WO_Message
+    ADD CreatedAt datetime2(3) NOT NULL
+        CONSTRAINT DF_Master_WO_Message_CreatedAt
+        DEFAULT (SYSUTCDATETIME())
+        WITH VALUES;
+END;
+GO
+
+UPDATE dbo.Master_WO_Message WITH (SNAPSHOT)
+SET CreatedAt = SYSUTCDATETIME()
+WHERE CreatedAt IS NULL;
+GO
+
+IF EXISTS
+(
+    SELECT 1
+    FROM sys.columns
+    WHERE object_id = OBJECT_ID(N'dbo.Master_WO_Message')
+      AND name = N'CreatedAt'
+      AND is_nullable = 1
+)
+BEGIN
+    ALTER TABLE dbo.Master_WO_Message
+    ALTER COLUMN CreatedAt datetime2(3) NOT NULL;
+END;
+GO
+
+IF NOT EXISTS
+(
+    SELECT 1
+    FROM sys.default_constraints dc
+    INNER JOIN sys.columns c
+        ON c.object_id = dc.parent_object_id
+       AND c.column_id = dc.parent_column_id
+    WHERE dc.parent_object_id = OBJECT_ID(N'dbo.Master_WO_Message')
+      AND c.name = N'CreatedAt'
+)
+BEGIN
+    ALTER TABLE dbo.Master_WO_Message
+    ADD CONSTRAINT DF_Master_WO_Message_CreatedAt
+        DEFAULT (SYSUTCDATETIME()) FOR CreatedAt;
+END;
+GO
+
+IF NOT EXISTS
+(
+    SELECT 1
+    FROM sys.indexes
+    WHERE object_id = OBJECT_ID(N'dbo.Master_WO_Message')
+      AND name = N'IX_Master_WO_Message_CreatedAt'
+)
+BEGIN
+    IF EXISTS
+    (
+        SELECT 1
+        FROM sys.tables
+        WHERE object_id = OBJECT_ID(N'dbo.Master_WO_Message')
+          AND is_memory_optimized = 1
+    )
+    BEGIN
+        EXEC(N'
+            ALTER TABLE dbo.Master_WO_Message
+            ADD INDEX IX_Master_WO_Message_CreatedAt (CreatedAt);
+        ');
+    END
+    ELSE
+    BEGIN
+        EXEC(N'
+            CREATE NONCLUSTERED INDEX IX_Master_WO_Message_CreatedAt
+            ON dbo.Master_WO_Message (CreatedAt);
+        ');
+    END;
+END;
+GO
+
+
+/* ============================================================
+   3. IPTH_BOM_Change_Queue
+   CreatedAt already exists as datetime NULL.
+   Keep the existing datetime type and make it automatic + NOT NULL.
+   ============================================================ */
+
+IF OBJECT_ID(N'dbo.IPTH_BOM_Change_Queue', N'U') IS NULL
+BEGIN
+    RAISERROR('Table dbo.IPTH_BOM_Change_Queue was not found.', 16, 1);
+    RETURN;
+END;
+GO
+
+IF COL_LENGTH(N'dbo.IPTH_BOM_Change_Queue', N'CreatedAt') IS NULL
+BEGIN
+    ALTER TABLE dbo.IPTH_BOM_Change_Queue
+    ADD CreatedAt datetime NOT NULL
+        CONSTRAINT DF_IPTH_BOM_Change_Queue_CreatedAt
+        DEFAULT (GETUTCDATE())
+        WITH VALUES;
+END;
+GO
+
+UPDATE dbo.IPTH_BOM_Change_Queue
+SET CreatedAt = GETUTCDATE()
+WHERE CreatedAt IS NULL;
+GO
+
+IF EXISTS
+(
+    SELECT 1
+    FROM sys.columns
+    WHERE object_id = OBJECT_ID(N'dbo.IPTH_BOM_Change_Queue')
+      AND name = N'CreatedAt'
+      AND is_nullable = 1
+)
+BEGIN
+    ALTER TABLE dbo.IPTH_BOM_Change_Queue
+    ALTER COLUMN CreatedAt datetime NOT NULL;
+END;
+GO
+
+IF NOT EXISTS
+(
+    SELECT 1
+    FROM sys.default_constraints dc
+    INNER JOIN sys.columns c
+        ON c.object_id = dc.parent_object_id
+       AND c.column_id = dc.parent_column_id
+    WHERE dc.parent_object_id = OBJECT_ID(N'dbo.IPTH_BOM_Change_Queue')
+      AND c.name = N'CreatedAt'
+)
+BEGIN
+    ALTER TABLE dbo.IPTH_BOM_Change_Queue
+    ADD CONSTRAINT DF_IPTH_BOM_Change_Queue_CreatedAt
+        DEFAULT (GETUTCDATE()) FOR CreatedAt;
+END;
+GO
+
+IF NOT EXISTS
+(
+    SELECT 1
+    FROM sys.indexes
+    WHERE object_id = OBJECT_ID(N'dbo.IPTH_BOM_Change_Queue')
+      AND name = N'IX_IPTH_BOM_Change_Queue_CreatedAt'
+)
+BEGIN
+    CREATE NONCLUSTERED INDEX IX_IPTH_BOM_Change_Queue_CreatedAt
+    ON dbo.IPTH_BOM_Change_Queue (CreatedAt);
+END;
+GO
+
+
+/* ============================================================
+   Verification
+   ============================================================ */
+
+SELECT
+    t.name AS TableName,
+    c.name AS ColumnName,
+    TYPE_NAME(c.user_type_id) AS DataType,
+    c.is_nullable AS IsNullable,
+    dc.name AS DefaultConstraint,
+    dc.definition AS DefaultDefinition
+FROM sys.tables t
+INNER JOIN sys.columns c
+    ON c.object_id = t.object_id
+LEFT JOIN sys.default_constraints dc
+    ON dc.parent_object_id = c.object_id
+   AND dc.parent_column_id = c.column_id
+WHERE t.schema_id = SCHEMA_ID(N'dbo')
+  AND t.name IN
+  (
+      N'DefectsLog',
+      N'Master_WO_Message',
+      N'IPTH_BOM_Change_Queue'
+  )
+  AND c.name = N'CreatedAt'
+ORDER BY t.name;
+GO
+
+SELECT
+    OBJECT_NAME(i.object_id) AS TableName,
+    i.name AS IndexName,
+    i.type_desc
+FROM sys.indexes i
+WHERE i.object_id IN
+(
+    OBJECT_ID(N'dbo.DefectsLog'),
+    OBJECT_ID(N'dbo.Master_WO_Message'),
+    OBJECT_ID(N'dbo.IPTH_BOM_Change_Queue')
+)
+AND i.name IN
+(
+    N'IX_DefectsLog_CreatedAt',
+    N'IX_Master_WO_Message_CreatedAt',
+    N'IX_IPTH_BOM_Change_Queue_CreatedAt'
+)
+ORDER BY TableName;
+GO
+
+
+
+IF COL_LENGTH(
+    'dbo.Master_WO_Message',
+    'CreatedAt'
+) IS NULL
+BEGIN
+    ALTER TABLE dbo.Master_WO_Message
+    ADD CreatedAt datetime2(3) NOT NULL
+        CONSTRAINT DF_Master_WO_Message_CreatedAt
+        DEFAULT (SYSUTCDATETIME())
+        WITH VALUES;
+END;
+GO

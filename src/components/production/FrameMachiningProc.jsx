@@ -44,6 +44,17 @@ const FrameMachiningProc = () => {
     const [rawMaterials, setRawMaterials] = useState([]);
     const [qtyModal, setQtyModal] = useState({ isOpen: false, scannedCode: '', matchedRule: null });
     const [inputQty, setInputQty] = useState('');
+    const [remainderModal, setRemainderModal] = useState({
+        isOpen: false,
+        batch: '',
+        matchedRule: null,
+        previousWO: null,
+        previousQTY: 0,
+        requestedWO: null,
+        value: '',
+        error: '',
+        isSubmitting: false
+    });
 
     const [showMatScanner, setShowMatScanner] = useState(false);
     const [showDoneScanner, setShowDoneScanner] = useState(false);
@@ -68,40 +79,43 @@ const FrameMachiningProc = () => {
         fetchDefects();
     }, []);
 
-    useEffect(() => {
-    const fetchHistory = async () => {
-      if (!woData?.WO) return;
-      try {
+    const loadMaterialHistory = async () => {
+        if (!woData?.WO) return { mainInputs: [], rawMaterials: [] };
+
         const result = await workstationAPI.getLoggedMaterials(woData.WO);
-        if (result.success) {
-          const mInputs = result.data.mainInputs || [];
-          const rMaterials = result.data.rawMaterials || [];
-          
-          setMainInputs(mInputs);
-          setRawMaterials(rMaterials);
-
-          // ==========================================
-          // LOGIC: YÊU CẦU QUÉT WORKCENTER KHI LỆNH MỚI TINH
-          // ==========================================
-          const processedQty = (Number(woData.QTY_OK) || 0) + (Number(woData.QTY_NG) || 0);
-
-          // Nếu Lệnh chưa chạy (Qty=0), chưa quét vật liệu, và chưa có WCTR -> Bật Modal ép quét
-          if (processedQty === 0 && mInputs.length === 0 && rMaterials.length === 0) {
-                setWctrModalOpen(true);
-            }
+        if (!result.success) {
+            throw new Error(result.message || "Không thể tải lịch sử vật tư.");
         }
-      } catch (error) {
-        console.error("Lỗi khi tải lịch sử :", error);
-      }
+
+        const mInputs = result.data?.mainInputs || [];
+        const rMaterials = result.data?.rawMaterials || [];
+        setMainInputs(mInputs);
+        setRawMaterials(rMaterials);
+        return { mainInputs: mInputs, rawMaterials: rMaterials };
     };
-    fetchHistory();
-  }, [woData.WO]); // LƯU Ý: Không cho activeJobs vào dependency ở đây để tránh bị re-render liên tục
 
     useEffect(() => {
-        if (!qtyModal.isOpen && !isNgModalOpen && !matReqModal.isOpen && !doneModal.isOpen && !showMatScanner && !showDoneScanner && inputRef.current) {
+        const fetchHistory = async () => {
+            try {
+                const { mainInputs: mInputs, rawMaterials: rMaterials } = await loadMaterialHistory();
+                const processedQty = (Number(woData.QTY_OK) || 0) + (Number(woData.QTY_NG) || 0);
+
+                if (processedQty === 0 && mInputs.length === 0 && rMaterials.length === 0) {
+                    setWctrModalOpen(true);
+                }
+            } catch (error) {
+                console.error("Lỗi khi tải lịch sử:", error);
+            }
+        };
+
+        fetchHistory();
+    }, [woData.WO]);
+
+    useEffect(() => {
+        if (!qtyModal.isOpen && !remainderModal.isOpen && !isNgModalOpen && !matReqModal.isOpen && !doneModal.isOpen && !showMatScanner && !showDoneScanner && inputRef.current) {
             inputRef.current.focus();
         }
-    }, [qtyModal.isOpen, isNgModalOpen, matReqModal.isOpen, doneModal.isOpen, showMatScanner, showDoneScanner, mainInputs, rawMaterials]);
+    }, [qtyModal.isOpen, remainderModal.isOpen, isNgModalOpen, matReqModal.isOpen, doneModal.isOpen, showMatScanner, showDoneScanner, mainInputs, rawMaterials]);
 
     const handleScanMaterial = async (code) => {
         if (!code.trim()) return;
@@ -118,12 +132,23 @@ const FrameMachiningProc = () => {
                 const result = await workstationAPI.logInputMain(woData.WO, scannedCode);
                 console.log("result:",result);
                 if (result.success) {
-                    setMainInputs([{ 
-                        code: scannedCode, 
-                        pn: matchedMainRule.partNumber, // Ghi nhận thêm PN để hiển thị cho rõ
-                        time: new Date().toLocaleTimeString(), 
-                        qty:  result.data?.Added_QTY || 1
-                    }, ...mainInputs]);
+                    await loadMaterialHistory();
+                    setMaterialInput('');
+                } else if (
+                    result.message === "BATCH_REMAINDER_REQUIRED" ||
+                    result.data?.Action === "BATCH_REMAINDER_REQUIRED"
+                ) {
+                    setRemainderModal({
+                        isOpen: true,
+                        batch: scannedCode,
+                        matchedRule: matchedMainRule,
+                        previousWO: result.data?.PreviousWO,
+                        previousQTY: Number(result.data?.PreviousQTY || 0),
+                        requestedWO: result.data?.RequestedWO || woData.WO,
+                        value: '',
+                        error: '',
+                        isSubmitting: false
+                    });
                     setMaterialInput('');
                 } else {
                     setScanError(result.message || "Lỗi ghi nhận Input Batch!");
@@ -153,6 +178,59 @@ const FrameMachiningProc = () => {
 
     const handleKeyDown = (e) => { if (e.key === 'Enter') handleScanMaterial(materialInput); };
     const handleMatCameraScan = (decodedText) => { setShowMatScanner(false); setMaterialInput(decodedText); handleScanMaterial(decodedText); };
+
+    const handleSubmitRemainder = async () => {
+        const remainingQty = Number(remainderModal.value);
+        const maxQty = Number(remainderModal.previousQTY);
+
+        if (!Number.isFinite(remainingQty) || remainingQty <= 0) {
+            return setRemainderModal(prev => ({ ...prev, error: "Remainder phải lớn hơn 0." }));
+        }
+        if (remainingQty >= maxQty) {
+            return setRemainderModal(prev => ({
+                ...prev,
+                error: `Remainder phải nhỏ hơn số lượng WO trước đang giữ (${maxQty}).`
+            }));
+        }
+
+        setRemainderModal(prev => ({ ...prev, isSubmitting: true, error: '' }));
+        try {
+            const result = await workstationAPI.transferInputBatch(
+                woData.WO,
+                remainderModal.batch,
+                remainingQty
+            );
+
+            if (!result.success) {
+                return setRemainderModal(prev => ({
+                    ...prev,
+                    isSubmitting: false,
+                    error: result.message || "Không thể chuyển remainder."
+                }));
+            }
+
+            await loadMaterialHistory();
+            setRemainderModal({
+                isOpen: false,
+                batch: '',
+                matchedRule: null,
+                previousWO: null,
+                previousQTY: 0,
+                requestedWO: null,
+                value: '',
+                error: '',
+                isSubmitting: false
+            });
+            setScanError('');
+        } catch (error) {
+            const backendMessage = error.response?.data?.detail || error.response?.data?.message;
+            setRemainderModal(prev => ({
+                ...prev,
+                isSubmitting: false,
+                error: backendMessage || "Lỗi kết nối server khi chuyển remainder."
+            }));
+        }
+    };
 
     const handleSubmitRawQty = async () => {
         const qty = parseFloat(inputQty);
@@ -375,6 +453,24 @@ const FrameMachiningProc = () => {
         }
     };
 
+    const buildMaterialChecklist = (rules = [], scannedItems = []) =>
+        rules.map((rule, index) => {
+            const pn = rule.partNumber || `UNDEFINED-${index + 1}`;
+            const matchedItems = scannedItems.filter(item => item.pn === rule.partNumber);
+            const totalQty = matchedItems.reduce((sum, item) => sum + (Number(item.qty) || 0), 0);
+            return {
+                key: `${pn}-${index}`,
+                pn,
+                fixedString: rule.fixedString || '',
+                isScanned: matchedItems.length > 0,
+                scanCount: matchedItems.length,
+                totalQty
+            };
+        });
+
+    const mainChecklist = buildMaterialChecklist(mainInputRules, mainInputs);
+    const rawChecklist = buildMaterialChecklist(rawRules || [], rawMaterials);
+
     return(
         <div className="w-full mx-auto bg-slate-800 rounded-2xl border border-slate-700 shadow-2xl flex flex-col overflow-hidden min-h-[700px] relative animate-fade-in">
             {showMatScanner && <BarcodeScanner onScanSuccess={handleMatCameraScan} onClose={() => setShowMatScanner(false)} />}
@@ -440,43 +536,121 @@ const FrameMachiningProc = () => {
 
             {/* Các nội dung hiển thị Material & Modals giữ nguyên như cũ ... */}
             <div className="p-4 sm:p-6 pb-6 space-y-4 overflow-y-auto custom-scrollbar flex-1 bg-slate-900/30">
-                <ExpandableSection title={`Main Input Material (${mainInputs.length})`} variant="blue" defaultOpen={true}>
-                        <div className="space-y-3 font-mono text-sm sm:text-base max-h-60 overflow-y-auto pr-2">
-                            {mainInputs.length === 0 ? (
-                                <div className="min-h-[60px] flex items-center justify-center text-slate-500 italic text-sm">Chưa có dữ liệu. Vui lòng quét mã Main Input.</div>
-                            ) : (
-                                mainInputs.map((item, idx) => (
-                                    <div key={idx} className="flex flex-col sm:flex-row justify-between sm:items-center border-b border-slate-600/50 pb-3 gap-1 sm:gap-4">
-                                        <div className="flex flex-col">
-                                            <span className="text-blue-300 break-all">{item.code}</span>
-                                            {/* Hiển thị thêm PN nếu có */}
-                                            {item.pn && <span className="text-slate-500 text-xs mt-0.5">PN: {item.pn}</span>}
-                                        </div>
-                                        <div className="flex gap-4 items-center">
-                                            <span className="text-slate-400 text-xs sm:text-sm whitespace-nowrap bg-slate-800 px-2 py-1 rounded">Số lượng: {item.qty} PCS</span>
-                                            <span className="text-slate-400 text-xs sm:text-sm whitespace-nowrap">{item.time}</span>
-                                        </div>
+                <ExpandableSection
+                    title={`Main Input Material (${mainChecklist.filter(item => item.isScanned).length}/${mainChecklist.length} PN đã scan)`}
+                    variant="blue"
+                    defaultOpen={true}
+                >
+                    <div className="space-y-4">
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                            {mainChecklist.map(item => (
+                                <div
+                                    key={item.key}
+                                    className={`rounded-xl border p-3 flex items-center justify-between gap-3 ${
+                                        item.isScanned
+                                            ? 'bg-emerald-500/10 border-emerald-500/40'
+                                            : 'bg-amber-500/5 border-amber-500/30'
+                                    }`}
+                                >
+                                    <div className="min-w-0">
+                                        <p className={`font-bold font-mono break-all ${item.isScanned ? 'text-emerald-300' : 'text-amber-300'}`}>
+                                            PN: {item.pn}
+                                        </p>
+                                        <p className="text-xs text-slate-500 mt-1 break-all">
+                                            Nhận diện: {item.fixedString || 'Không khai báo fixedString'}
+                                        </p>
                                     </div>
-                                ))
-                            )}
-                        </div>
-                </ExpandableSection>
-                <ExpandableSection title={`Raw Material (${rawMaterials.length})`} variant="green" defaultOpen={false}>
-                    <div className="space-y-3 font-mono text-sm sm:text-base max-h-60 overflow-y-auto pr-2">
-                        {rawMaterials.length === 0 ? (
-                            <div className="min-h-[60px] flex items-center justify-center text-slate-500 italic text-sm">Chưa có dữ liệu phụ liệu.</div>
-                        ) : (
-                            rawMaterials.map((item, idx) => (
-                                <div key={idx} className="flex flex-col sm:flex-row justify-between sm:items-center border-b border-slate-600/50 pb-3 gap-1 sm:gap-4">
-                                    <span className="text-emerald-300 break-all">{item.code}</span>
-                                    <div className="flex gap-4 items-center">
-                                        <span className="text-slate-500 text-xs sm:text-sm whitespace-nowrap">PN: {item.pn}</span>
-                                        <span className="text-emerald-400 font-bold text-xs sm:text-sm whitespace-nowrap bg-emerald-500/10 px-2 py-1 rounded border border-emerald-500/20">{item.qty} pcs</span>
-                                        <span className="text-slate-400 text-xs sm:text-sm whitespace-nowrap">{item.time}</span>
+                                    <div className="text-right shrink-0">
+                                        <p className={`text-xs font-black uppercase ${item.isScanned ? 'text-emerald-400' : 'text-amber-400'}`}>
+                                            {item.isScanned ? 'Đã scan' : 'Chưa scan'}
+                                        </p>
+                                        <p className="text-xs text-slate-400 mt-1">
+                                            {item.scanCount} mã · {item.totalQty} PCS
+                                        </p>
                                     </div>
                                 </div>
-                            ))
-                        )}
+                            ))}
+                            {mainChecklist.length === 0 && (
+                                <div className="text-slate-500 italic">Model không yêu cầu Main Input.</div>
+                            )}
+                        </div>
+
+                        <div className="border-t border-slate-700 pt-3 space-y-3 font-mono text-sm sm:text-base max-h-60 overflow-y-auto pr-2">
+                            {mainInputs.length === 0 ? (
+                                <div className="min-h-[50px] flex items-center justify-center text-slate-500 italic text-sm">
+                                    Chưa có lịch sử scan Main Input.
+                                </div>
+                            ) : mainInputs.map((item, idx) => (
+                                <div key={`${item.code}-${idx}`} className="flex flex-col sm:flex-row justify-between sm:items-center border-b border-slate-600/50 pb-3 gap-1 sm:gap-4">
+                                    <div>
+                                        <span className="text-blue-300 break-all">{item.code}</span>
+                                        <span className="block text-slate-500 text-xs mt-0.5">PN: {item.pn}</span>
+                                    </div>
+                                    <div className="flex gap-4 items-center">
+                                        <span className="text-slate-400 text-xs bg-slate-800 px-2 py-1 rounded">Số lượng: {item.qty} PCS</span>
+                                        <span className="text-slate-400 text-xs">{item.time}</span>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </ExpandableSection>
+
+                <ExpandableSection
+                    title={`Raw Material (${rawChecklist.filter(item => item.isScanned).length}/${rawChecklist.length} PN đã scan)`}
+                    variant="green"
+                    defaultOpen={false}
+                >
+                    <div className="space-y-4">
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                            {rawChecklist.map(item => (
+                                <div
+                                    key={item.key}
+                                    className={`rounded-xl border p-3 flex items-center justify-between gap-3 ${
+                                        item.isScanned
+                                            ? 'bg-emerald-500/10 border-emerald-500/40'
+                                            : 'bg-amber-500/5 border-amber-500/30'
+                                    }`}
+                                >
+                                    <div className="min-w-0">
+                                        <p className={`font-bold font-mono break-all ${item.isScanned ? 'text-emerald-300' : 'text-amber-300'}`}>
+                                            PN: {item.pn}
+                                        </p>
+                                        <p className="text-xs text-slate-500 mt-1 break-all">
+                                            Nhận diện: {item.fixedString || 'Không khai báo fixedString'}
+                                        </p>
+                                    </div>
+                                    <div className="text-right shrink-0">
+                                        <p className={`text-xs font-black uppercase ${item.isScanned ? 'text-emerald-400' : 'text-amber-400'}`}>
+                                            {item.isScanned ? 'Đã scan' : 'Chưa scan'}
+                                        </p>
+                                        <p className="text-xs text-slate-400 mt-1">
+                                            {item.scanCount} mã · {item.totalQty} PCS
+                                        </p>
+                                    </div>
+                                </div>
+                            ))}
+                            {rawChecklist.length === 0 && (
+                                <div className="text-slate-500 italic">Model không yêu cầu Raw Material.</div>
+                            )}
+                        </div>
+
+                        <div className="border-t border-slate-700 pt-3 space-y-3 font-mono text-sm sm:text-base max-h-60 overflow-y-auto pr-2">
+                            {rawMaterials.length === 0 ? (
+                                <div className="min-h-[50px] flex items-center justify-center text-slate-500 italic text-sm">
+                                    Chưa có lịch sử scan Raw Material.
+                                </div>
+                            ) : rawMaterials.map((item, idx) => (
+                                <div key={`${item.code}-${idx}`} className="flex flex-col sm:flex-row justify-between sm:items-center border-b border-slate-600/50 pb-3 gap-1 sm:gap-4">
+                                    <span className="text-emerald-300 break-all">{item.code}</span>
+                                    <div className="flex gap-4 items-center">
+                                        <span className="text-slate-500 text-xs">PN: {item.pn}</span>
+                                        <span className="text-emerald-400 font-bold text-xs bg-emerald-500/10 px-2 py-1 rounded border border-emerald-500/20">{item.qty} pcs</span>
+                                        <span className="text-slate-400 text-xs">{item.time}</span>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
                     </div>
                 </ExpandableSection>
             </div>
@@ -490,6 +664,81 @@ const FrameMachiningProc = () => {
                 wo={woData.WO}
                 modelNo={woData.ModelNO}
             />
+
+            {remainderModal.isOpen && (
+                <div className="absolute inset-0 z-[60] bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4">
+                    <div className="bg-slate-800 w-full max-w-lg rounded-2xl border border-amber-500/50 shadow-2xl p-6 animate-fade-in-up">
+                        <div className="flex justify-between items-start gap-4 mb-4 border-b border-slate-700 pb-3">
+                            <div>
+                                <h2 className="text-xl font-black text-amber-400">Xác nhận số lượng dư</h2>
+                                <p className="text-slate-400 text-sm mt-1">Batch này đang thuộc một WO trước đó.</p>
+                            </div>
+                            <button
+                                onClick={() => setRemainderModal(prev => ({ ...prev, isOpen: false, error: '' }))}
+                                disabled={remainderModal.isSubmitting}
+                                className="text-slate-400 hover:text-white disabled:opacity-50"
+                            >
+                                <X size={24}/>
+                            </button>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3 mb-5 text-sm">
+                            <div className="col-span-2 bg-slate-900 p-3 rounded-lg border border-slate-700">
+                                <p className="text-slate-500 text-xs">Batch</p>
+                                <p className="text-blue-300 font-mono font-bold break-all">{remainderModal.batch}</p>
+                                <p className="text-slate-500 text-xs mt-1">PN: {remainderModal.matchedRule?.partNumber}</p>
+                            </div>
+                            <div className="bg-slate-900 p-3 rounded-lg border border-slate-700">
+                                <p className="text-slate-500 text-xs">WO trước</p>
+                                <p className="text-white font-mono font-bold">{remainderModal.previousWO}</p>
+                            </div>
+                            <div className="bg-slate-900 p-3 rounded-lg border border-slate-700">
+                                <p className="text-slate-500 text-xs">Đang giữ</p>
+                                <p className="text-amber-300 font-mono font-bold">{remainderModal.previousQTY} PCS</p>
+                            </div>
+                        </div>
+
+                        <label className="block text-slate-300 font-bold mb-2">
+                            Số lượng remainder chuyển sang WO {remainderModal.requestedWO}
+                        </label>
+                        <input
+                            autoFocus
+                            type="number"
+                            min="1"
+                            max={Math.max(1, remainderModal.previousQTY - 1)}
+                            value={remainderModal.value}
+                            onChange={e => setRemainderModal(prev => ({ ...prev, value: e.target.value, error: '' }))}
+                            onKeyDown={e => e.key === 'Enter' && !remainderModal.isSubmitting && handleSubmitRemainder()}
+                            className="w-full bg-slate-900 border border-amber-500/50 text-white px-4 py-3 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none text-2xl font-mono text-center"
+                            placeholder={`1 - ${Math.max(1, remainderModal.previousQTY - 1)}`}
+                        />
+                        <p className="text-xs text-slate-500 mt-2">
+                            WO trước sẽ được chốt còn lại: {Math.max(0, remainderModal.previousQTY - (Number(remainderModal.value) || 0))} PCS.
+                        </p>
+
+                        {remainderModal.error && (
+                            <p className="text-red-400 text-sm font-bold mt-3">{remainderModal.error}</p>
+                        )}
+
+                        <div className="flex gap-3 mt-6">
+                            <button
+                                onClick={() => setRemainderModal(prev => ({ ...prev, isOpen: false, error: '' }))}
+                                disabled={remainderModal.isSubmitting}
+                                className="flex-1 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white py-3 rounded-lg font-bold"
+                            >
+                                HỦY
+                            </button>
+                            <button
+                                onClick={handleSubmitRemainder}
+                                disabled={remainderModal.isSubmitting}
+                                className="flex-1 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white py-3 rounded-lg font-bold"
+                            >
+                                {remainderModal.isSubmitting ? 'ĐANG XỬ LÝ...' : 'XÁC NHẬN'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {qtyModal.isOpen && (
                 <div className="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">

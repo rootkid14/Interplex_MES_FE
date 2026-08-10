@@ -14,6 +14,7 @@ import BomConfig from "./pages/BomConfig"
 import DatabaseEnginePage from "./pages/DatabaseEngine";
 import PrintTravelerTab from "./pages/PrintTraveler";
 import WarehousePage from "./pages/Warehouse";
+import SmartRepair from "./components/production/SmartRepair";
 
 const ProtectedRoute = ({ isAuthenticated, children }) => {
   if (!isAuthenticated) {
@@ -113,6 +114,15 @@ function App() {
           element={
             <ProtectedRoute isAuthenticated={isAuthenticated}>
               <WarehousePage/>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/repair"
+          element={
+            <ProtectedRoute isAuthenticated={isAuthenticated}>
+              <SmartRepair/>
             </ProtectedRoute>
           }
         />

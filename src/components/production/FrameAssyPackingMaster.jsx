@@ -62,6 +62,17 @@ const FrameAssyPackingMaster = () => {
 
     const [qtyModal, setQtyModal] = useState({ isOpen: false, scannedCode: '', matchedRule: null });
     const [inputQty, setInputQty] = useState('');
+    const [remainderModal, setRemainderModal] = useState({
+        isOpen: false,
+        batch: '',
+        matchedRule: null,
+        previousWO: null,
+        previousQTY: 0,
+        requestedWO: null,
+        value: '',
+        error: '',
+        isSubmitting: false
+    });
     const [qtyWarningModal, setQtyWarningModal] = useState({ isOpen: false, boxId: null, message: '', isSkip: false }); 
     const [doneModal, setDoneModal] = useState({ isOpen: false, scannedWo: '', error: '' });
     const [isNgModalOpen, setIsNgModalOpen] = useState(false);
@@ -71,8 +82,12 @@ const FrameAssyPackingMaster = () => {
     // 2. LỌC ALIAS & TÍNH TOÁN ĐỊNH MỨC POKA-YOKE
     // ========================================================
     
-    const requiredAliasRules = Object.entries(compactRules).filter(([pn, rule]) => 
-        rule.scanType === 'OUTPUT_MAIN' || rule.mode === 'EXTEND'
+    // Chỉ OUTPUT_MAIN mới đại diện cho Sub-Assy Output được phép link.
+    // mode/role chỉ phục vụ cách cấu hình hoặc hiển thị, không phải nguồn
+    // quyết định nghiệp vụ linkage.
+    const requiredAliasRules = Object.entries(compactRules).filter(([pn, rule]) =>
+        rule?.scanType === 'OUTPUT_MAIN'
+        && String(pn).trim() !== String(woData?.ModelNO || '').trim()
     );
     const requiredAliasPNs = requiredAliasRules.map(([pn]) => pn);
     const missingPNs = requiredAliasPNs.filter(pn => !masterData.linkedAliases.some(a => a.pn === pn));
@@ -152,6 +167,18 @@ const FrameAssyPackingMaster = () => {
         fetchStatus();
     }, [woData.WO]);
 
+    const refreshMaterialHistory = async () => {
+        const matRes = await workstationAPI.getLoggedMaterials(woData.WO);
+        if (!matRes?.success) {
+            throw new Error(matRes?.message || "Không thể tải lịch sử vật tư.");
+        }
+
+        const mainInputs = matRes?.data?.mainInputs || [];
+        const rawMaterials = matRes?.data?.rawMaterials || [];
+        setMasterData(prev => ({ ...prev, mainInputs, rawMaterials }));
+        return { mainInputs, rawMaterials };
+    };
+
     // ========================================================
     // 4. LOGIC QUÉT MÃ LỆNH & VẬT TƯ
     // ========================================================
@@ -175,32 +202,92 @@ const FrameAssyPackingMaster = () => {
     };
 
     const handleScanAlias = async (code) => {
-        const cleaned = code.trim();
+        const cleaned = String(code || '').trim();
+
         if (!cleaned) return;
+
         setErrorMsg('');
 
         try {
-            const resInfo = await workstationAPI.checkAliasWoInfo(cleaned);
-            if (!resInfo || !resInfo.success) return setErrorMsg(resInfo?.message || "Không tìm thấy thông tin Lệnh sản xuất này!");
-            
-            const actualPN = resInfo.data.PartNumber;
+            // Preview validation tại backend:
+            // SAP -> config Packing -> OUTPUT_MAIN -> independent config
+            // -> active linkage.
+            const checkResult = await workstationAPI.checkAssyPackingLink(
+                cleaned,
+                woData.WO
+            );
 
-            if (!requiredAliasPNs.includes(actualPN)) {
-                return setErrorMsg(`Lệnh [${cleaned}] (PN: ${actualPN}) KHÔNG thuộc quy trình của Model này!`);
-            }
-            if (masterData.linkedAliases.some(a => a.wo === cleaned)) {
-                return setErrorMsg(`Lệnh [${cleaned}] đã được khai báo trước đó!`);
+            if (!checkResult?.success) {
+                return setErrorMsg(
+                    checkResult?.message
+                    || 'Assy WO không hợp lệ để liên kết.'
+                );
             }
 
-            const linkRes = await workstationAPI.linkAssyPacking(cleaned, woData.WO);
-            if (linkRes.success) {
-                setMasterData(prev => ({ ...prev, linkedAliases: [{ wo: cleaned, pn: actualPN }, ...prev.linkedAliases] }));
+            const assyPN = checkResult?.data?.AssyPN;
+
+            if (
+                assyPN
+                && !requiredAliasPNs.includes(assyPN)
+            ) {
+                return setErrorMsg(
+                    `Backend xác nhận PN ${assyPN}, nhưng PN này không nằm `
+                    + 'trong checklist OUTPUT_MAIN hiện tại. Vui lòng tải lại config.'
+                );
+            }
+
+            if (
+                checkResult?.data?.AlreadyLinked
+                || checkResult?.data?.Code
+                    === 'ASSY_ALREADY_LINKED_TO_THIS_PACKING'
+            ) {
+                const aliasResult = await workstationAPI.getLinkedAliases(
+                    woData.WO
+                );
+
+                setMasterData(previous => ({
+                    ...previous,
+                    linkedAliases: aliasResult?.data || previous.linkedAliases
+                }));
+
                 setAliasInput('');
-            } else {
-                setErrorMsg(linkRes.message || "Lỗi khi liên kết Lệnh!");
+                return;
             }
+
+            // POST vẫn revalidate toàn bộ để chống dữ liệu thay đổi giữa
+            // preview và thời điểm ghi.
+            const linkResult = await workstationAPI.linkAssyPacking(
+                cleaned,
+                woData.WO
+            );
+
+            if (!linkResult?.success) {
+                return setErrorMsg(
+                    linkResult?.message
+                    || 'Lỗi khi liên kết Lệnh.'
+                );
+            }
+
+            const aliasResult = await workstationAPI.getLinkedAliases(
+                woData.WO
+            );
+
+            setMasterData(previous => ({
+                ...previous,
+                linkedAliases: aliasResult?.data || []
+            }));
+
+            setAliasInput('');
         } catch (error) {
-            setErrorMsg("Lỗi kết nối máy chủ khi kiểm tra Lệnh phụ!");
+            const backendMessage = (
+                error?.response?.data?.message
+                || error?.response?.data?.detail
+            );
+
+            setErrorMsg(
+                backendMessage
+                || 'Lỗi kết nối máy chủ khi kiểm tra Lệnh phụ.'
+            );
         }
     };
 
@@ -214,10 +301,27 @@ const FrameAssyPackingMaster = () => {
             try {
                 const res = await workstationAPI.logInputMain(woData.WO, cleaned);
                 if (res.success) {
-                    const newItem = { code: cleaned, pn: matchedMain.partNumber, qty: res.data?.Added_QTY || 1, time: new Date().toLocaleTimeString() };
-                    setMasterData(prev => ({ ...prev, mainInputs: [newItem, ...prev.mainInputs] }));
+                    await refreshMaterialHistory();
                     setMatInput('');
-                } else setErrorMsg(res.message);
+                } else if (
+                    res.message === "BATCH_REMAINDER_REQUIRED" ||
+                    res.data?.Action === "BATCH_REMAINDER_REQUIRED"
+                ) {
+                    setRemainderModal({
+                        isOpen: true,
+                        batch: cleaned,
+                        matchedRule: matchedMain,
+                        previousWO: res.data?.PreviousWO,
+                        previousQTY: Number(res.data?.PreviousQTY || 0),
+                        requestedWO: res.data?.RequestedWO || woData.WO,
+                        value: '',
+                        error: '',
+                        isSubmitting: false
+                    });
+                    setMatInput('');
+                } else {
+                    setErrorMsg(res.message || "Lỗi khi ghi nhận vật tư chính.");
+                }
             } catch (e) { setErrorMsg("Lỗi hệ thống khi ghi nhận Vật tư chính."); }
             return;
         }
@@ -233,6 +337,59 @@ const FrameAssyPackingMaster = () => {
         console.log(actualRules.mainInputs)
         console.log(actualRules.rawMaterials)
         setMatInput('');
+    };
+
+    const handleSubmitRemainder = async () => {
+        const remainingQty = Number(remainderModal.value);
+        const maxQty = Number(remainderModal.previousQTY);
+
+        if (!Number.isFinite(remainingQty) || remainingQty <= 0) {
+            return setRemainderModal(prev => ({ ...prev, error: "Remainder phải lớn hơn 0." }));
+        }
+        if (remainingQty >= maxQty) {
+            return setRemainderModal(prev => ({
+                ...prev,
+                error: `Remainder phải nhỏ hơn số lượng WO trước đang giữ (${maxQty}).`
+            }));
+        }
+
+        setRemainderModal(prev => ({ ...prev, isSubmitting: true, error: '' }));
+        try {
+            const res = await workstationAPI.transferInputBatch(
+                woData.WO,
+                remainderModal.batch,
+                remainingQty
+            );
+
+            if (!res.success) {
+                return setRemainderModal(prev => ({
+                    ...prev,
+                    isSubmitting: false,
+                    error: res.message || "Không thể chuyển remainder."
+                }));
+            }
+
+            await refreshMaterialHistory();
+            setRemainderModal({
+                isOpen: false,
+                batch: '',
+                matchedRule: null,
+                previousWO: null,
+                previousQTY: 0,
+                requestedWO: null,
+                value: '',
+                error: '',
+                isSubmitting: false
+            });
+            setErrorMsg('');
+        } catch (error) {
+            const backendMessage = error.response?.data?.detail || error.response?.data?.message;
+            setRemainderModal(prev => ({
+                ...prev,
+                isSubmitting: false,
+                error: backendMessage || "Lỗi kết nối server khi chuyển remainder."
+            }));
+        }
     };
 
     const handleSubmitRawQty = async () => {
@@ -259,31 +416,50 @@ const FrameAssyPackingMaster = () => {
         setErrorMsg('');
         
         // ===============================================
-        // [MỚI]: KIỂM TRA ĐỊNH DẠNG HOẶC ĐỘ DÀI (WILDCARD)
+        // KIỂM TRA ĐỊNH DẠNG HOẶC ĐỘ DÀI (WILDCARD)
         // ===============================================
         if (boxRule?.isWildcard) {
-            console.log(boxRule?.isWildcard)
-            // NẾU LÀ WILDCARD: Bỏ qua fixedString, chỉ kiểm tra độ dài
             const reqLen = parseInt(boxRule.wildcardLength);
-            // Nếu người dùng có thiết lập độ dài bắt buộc (> 0) thì check
             if (reqLen > 0 && cleanedCode.length !== reqLen) {
                 return setErrorMsg(`Mã Bao bì sai độ dài! Yêu cầu: ${reqLen} ký tự. Bạn vừa quét ${cleanedCode.length} ký tự.`);
             }
         } else {
-            // NẾU LÀ FIXED STRING NHƯ CŨ
             if (boxRule?.fixedString && !cleanedCode.toUpperCase().includes(boxRule.fixedString.toUpperCase())) {
                 return setErrorMsg(`Mã Bao bì sai định dạng cố định!`);
             }
         }
 
-        // Các Validation chống lỗi trùng lặp/kẹt hàng vẫn giữ nguyên
         if (masterData.boxes.some(b => b.id === cleanedCode)) return setErrorMsg("Mã Bao bì này đã được sử dụng!");
         if (activeBox) return setErrorMsg("Vui lòng hoàn tất Thùng hiện tại trước khi tạo mới!");
         if (currentTotalPacked >= maxAllowedQty) return setErrorMsg(`Thiếu vật tư! Vui lòng Nạp thêm vật tư trước khi đóng gói.`);
-        
-        const newBox = { id: cleanedCode, maxQty: MAX_QTY_PER_BOX, items: [], isFinished: false };
-        setMasterData(prev => ({ ...prev, boxes: [newBox, ...prev.boxes] }));
-        setBoxInput('');
+
+        try {
+            // Sau khi rule hợp lệ, tạo Box_Status ngay khi scan mã thùng.
+            const result = await workstationAPI.createPackingBox(
+                woData.WO,
+                cleanedCode
+            );
+
+            if (!result?.success) {
+                return setErrorMsg(result?.message || "Không thể tạo thùng mới.");
+            }
+
+            const newBox = result?.data || {
+                id: cleanedCode,
+                maxQty: MAX_QTY_PER_BOX,
+                items: [],
+                isFinished: false,
+                skipReason: ''
+            };
+
+            setMasterData(prev => ({
+                ...prev,
+                boxes: [newBox, ...prev.boxes]
+            }));
+            setBoxInput('');
+        } catch (error) {
+            setErrorMsg(error?.response?.data?.message || "Lỗi khi tạo thùng mới.");
+        }
     };
 
     const handleScanItem = async (code) => {
@@ -292,50 +468,104 @@ const FrameAssyPackingMaster = () => {
         setErrorMsg('');
         
         if (outputMainRule?.fixedString && !cleanedCode.toUpperCase().includes(outputMainRule.fixedString.toUpperCase())){
-            console.log(outputMainRule)
-            return setErrorMsg(`Mã Thành phẩm sai định dạng!`)
-        };
+            return setErrorMsg(`Mã Thành phẩm sai định dạng!`);
+        }
         if (activeBox.items.length >= activeBox.maxQty) return setErrorMsg("Thùng đã đạt định mức tối đa!");
         if (currentTotalPacked + 1 > maxAllowedQty) return setErrorMsg(`Vật tư chỉ đủ xuất ${maxAllowedQty} SP. Vui lòng Nạp thêm vật tư!`);
-        
-        const newItem = { code: cleanedCode, time: new Date().toLocaleTimeString() };
-        const newItemsArray = [newItem, ...activeBox.items]; 
-        
-        setMasterData(prev => ({
-            ...prev,
-            boxes: prev.boxes.map(b => b.id === activeBox.id ? { ...b, items: newItemsArray } : b)
-        }));
-        setItemInput('');
 
-        // TỰ ĐỘNG CHỐT KHI ĐẦY THÙNG
-        if (newItemsArray.length >= activeBox.maxQty) {
-            proceedFinishBoxWithData(activeBox.id, newItemsArray, false, ""); 
+        try {
+            // Mỗi lần scan item được commit ngay vào PackingLogItems.
+            const result = await workstationAPI.logPackingItem(
+                woData.WO,
+                activeBox.id,
+                cleanedCode
+            );
+
+            if (!result?.success) {
+                return setErrorMsg(result?.message || "Không thể ghi sản phẩm vào thùng.");
+            }
+
+            const savedItem = result?.data?.Item || {
+                code: cleanedCode,
+                time: new Date().toLocaleTimeString()
+            };
+
+            const newItemsArray = [savedItem, ...activeBox.items];
+
+            setMasterData(prev => ({
+                ...prev,
+                boxes: prev.boxes.map(b =>
+                    b.id === activeBox.id
+                        ? { ...b, items: newItemsArray }
+                        : b
+                )
+            }));
+            setItemInput('');
+
+            // Giữ UX cũ: đủ định mức thì tự động chốt thùng.
+            if (result?.data?.IsFull) {
+                await finishBox(activeBox.id, false, "");
+            }
+        } catch (error) {
+            setErrorMsg(error?.response?.data?.message || "Lỗi khi ghi sản phẩm vào thùng.");
         }
     };
 
-    const handleDeleteBox = (boxId) => {
-        if (window.confirm(`Xác nhận HỦY BỎ Thùng #${boxId}? Toàn bộ lịch sử quét mã bên trong sẽ bị xóa!`)) {
-            setMasterData(prev => ({ ...prev, boxes: prev.boxes.filter(b => b.id !== boxId) }));
+    const handleDeleteBox = async (boxId) => {
+        if (!window.confirm(`Xác nhận HỦY BỎ Thùng #${boxId}? Toàn bộ lịch sử quét mã bên trong sẽ bị xóa!`)) {
+            return;
+        }
+
+        try {
+            const result = await workstationAPI.deleteOpenPackingBox(
+                woData.WO,
+                boxId
+            );
+
+            if (!result?.success) {
+                return setErrorMsg(result?.message || "Không thể hủy thùng.");
+            }
+
+            setMasterData(prev => ({
+                ...prev,
+                boxes: prev.boxes.filter(b => b.id !== boxId)
+            }));
+        } catch (error) {
+            setErrorMsg(error?.response?.data?.message || "Lỗi khi hủy thùng.");
         }
     };
 
-    const handleRemoveItem = (boxId, itemIndex) => {
-        setMasterData(prev => ({
-            ...prev,
-            boxes: prev.boxes.map(b => {
-                if (b.id === boxId) {
-                    const newItems = [...b.items];
-                    newItems.splice(itemIndex, 1);
-                    return { ...b, items: newItems };
-                }
-                return b;
-            })
-        }));
+    const handleRemoveItem = async (boxId, itemIndex, item) => {
+        try {
+            const result = await workstationAPI.removePackingItem(
+                woData.WO,
+                boxId,
+                item.code
+            );
+
+            if (!result?.success) {
+                return setErrorMsg(result?.message || "Không thể xóa item khỏi thùng.");
+            }
+
+            setMasterData(prev => ({
+                ...prev,
+                boxes: prev.boxes.map(b => {
+                    if (b.id === boxId) {
+                        const newItems = [...b.items];
+                        newItems.splice(itemIndex, 1);
+                        return { ...b, items: newItems };
+                    }
+                    return b;
+                })
+            }));
+        } catch (error) {
+            setErrorMsg(error?.response?.data?.message || "Lỗi khi xóa item khỏi thùng.");
+        }
     };
 
     const handleManualFinish = () => {
         if (!activeBox) return;
-        proceedFinishBoxWithData(activeBox.id, activeBox.items, false, "");
+        finishBox(activeBox.id, false, "");
     };
 
     const handleSubmitSkipBox = async () => {
@@ -347,30 +577,43 @@ const FrameAssyPackingMaster = () => {
             return;
         }
         
-        proceedFinishBoxWithData(activeBox.id, activeBox.items, true, skipModal.reason);
+        finishBox(activeBox.id, true, skipModal.reason);
     };
 
-    const proceedFinishBoxWithData = async (boxId, itemsArray, isSkipped, skipReason) => {
+    const finishBox = async (boxId, isSkipped, skipReason) => {
         try {
-            const payload = {
-                WO: woData.WO, BoxId: boxId, PN: fallbackPN,
-                BoxQty: itemsArray.length, Items: itemsArray.map(item => item.code), 
-                IsSkipped: isSkipped, SkipReason: skipReason
-            };
-            const result = await workstationAPI.logPacking(payload);
+            // Item đã nằm trong DB. Request này chỉ xác nhận đóng/skip và cập nhật Box_Status.
+            const result = await workstationAPI.finishPackingBox({
+                PackingWO: woData.WO,
+                BoxId: boxId,
+                PN: fallbackPN,
+                IsSkipped: isSkipped,
+                SkipReason: skipReason
+            });
             
-            if (result.success) {
+            if (result?.success) {
+                const actualQty = Number(result?.data?.BoxQty || 0);
+
                 setMasterData(prev => ({
                     ...prev,
-                    boxes: prev.boxes.map(b => b.id === boxId ? { ...b, isFinished: true, skipReason: skipReason } : b)
+                    boxes: prev.boxes.map(b =>
+                        b.id === boxId
+                            ? {
+                                ...b,
+                                maxQty: actualQty || b.items.length,
+                                isFinished: true,
+                                skipReason: skipReason
+                            }
+                            : b
+                    )
                 }));
                 setSkipModal({ isOpen: false, boxId: '', reason: '' });
                 setQtyWarningModal({ isOpen: false, boxId: null, message: '', isSkip: false });
             } else {
-                alert(result.message || "Lỗi ghi nhận lên Hệ thống!");
+                alert(result?.message || "Lỗi ghi nhận lên Hệ thống!");
             }
         } catch (error) {
-            alert("Lỗi mạng: Không thể xác nhận Đóng gói!");
+            alert(error?.response?.data?.message || "Lỗi mạng: Không thể xác nhận Đóng gói!");
         }
     };
 
@@ -392,6 +635,27 @@ const FrameAssyPackingMaster = () => {
             } else setDoneModal(prev => ({...prev, error: result?.message}));
         } catch (error) { setDoneModal(prev => ({...prev, error: "Lỗi giao tiếp với máy chủ MES!"})); }
     };
+
+    const buildMaterialChecklist = (rules = [], scannedItems = []) =>
+        rules.map((rule, index) => {
+            const pn = rule.partNumber || `UNDEFINED-${index + 1}`;
+            const matchedItems = scannedItems.filter(item => item.pn === rule.partNumber);
+            return {
+                key: `${pn}-${index}`,
+                pn,
+                fixedString: rule.fixedString || '',
+                isScanned: matchedItems.length > 0,
+                scanCount: matchedItems.length,
+                totalQty: matchedItems.reduce((sum, item) => sum + (Number(item.qty) || 0), 0)
+            };
+        });
+
+    const mainChecklist = buildMaterialChecklist(actualRules.mainInputs || [], masterData.mainInputs);
+    const rawChecklist = buildMaterialChecklist(actualRules.rawMaterials || [], masterData.rawMaterials);
+    const completedRequiredPNs =
+        mainChecklist.filter(item => item.isScanned).length +
+        rawChecklist.filter(item => item.isScanned).length;
+    const totalRequiredPNs = mainChecklist.length + rawChecklist.length;
 
     if (isLoading) return <div className="p-10 text-center text-white font-bold animate-pulse">Đang đồng bộ dữ liệu Hệ thống...</div>;
 
@@ -428,7 +692,19 @@ const FrameAssyPackingMaster = () => {
                                 </span>
                             )}
                         </h1>
-                        <p className="text-slate-400 text-sm font-mono mt-1">WO Master: <span className="text-blue-400 font-bold">{woData.WO}</span> | Model: {woData.ModelNO}</p>
+                        <p className="text-slate-400 text-sm font-mono mt-1">
+                            WO Packing Master:{' '}
+                            <span className="text-blue-400 font-bold">{woData.WO}</span>
+                            {' '}| Model: {woData.ModelNO}
+                        </p>
+
+                        {woData?.RedirectedFromAssy && (
+                            <p className="text-orange-300 text-xs font-mono mt-1">
+                                Truy cập qua Assy WO:{' '}
+                                <span className="font-bold">{woData.RequestedWO || woData.AliasWO}</span>
+                                {' '}→ mọi vật liệu, Box, tiến độ và trạng thái được ghi dưới Packing WO {woData.WO}.
+                            </p>
+                        )}
                     </div>
                 </div>
                 <div className="flex gap-2 w-full sm:w-auto">
@@ -483,17 +759,73 @@ const FrameAssyPackingMaster = () => {
                                      <ActionButton onClick={() => setIsNgModalOpen(true)} label={t('production.ngReport')} color="red" icon={<AlertTriangle size={18}/>} className="py-2 px-6" />
                                 </div>
                                 
-                                <div className="space-y-3">
-                                    <h3 className="text-slate-400 font-bold uppercase text-sm border-b border-slate-700 pb-2">Lịch sử tiêu hao vật tư ({masterData.mainInputs.length + masterData.rawMaterials.length}):</h3>
-                                    {[...masterData.mainInputs, ...masterData.rawMaterials].map((item, i) => (
-                                        <div key={i} className="bg-slate-800/50 border border-slate-700 p-3 rounded-lg flex justify-between items-center hover:bg-slate-700 transition-colors">
-                                            <div>
-                                                <p className="text-emerald-300 font-mono font-bold">{item.code}</p>
-                                                <p className="text-slate-500 text-xs mt-1">PN: {item.pn} | Kích hoạt: {item.time}</p>
-                                            </div>
-                                            <span className="bg-slate-900 text-emerald-400 px-3 py-1 rounded font-bold border border-emerald-500/30">+{item.qty}</span>
+                                <div className="space-y-5">
+                                    <div>
+                                        <div className="flex items-center justify-between border-b border-slate-700 pb-2 mb-3">
+                                            <h3 className="text-slate-400 font-bold uppercase text-sm">Danh sách vật tư bắt buộc</h3>
+                                            <span className={`text-xs font-black px-3 py-1 rounded-full border ${
+                                                completedRequiredPNs === totalRequiredPNs
+                                                    ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30'
+                                                    : 'text-amber-400 bg-amber-500/10 border-amber-500/30'
+                                            }`}>
+                                                {completedRequiredPNs}/{totalRequiredPNs} PN đã scan
+                                            </span>
                                         </div>
-                                    ))}
+
+                                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                                            {[...mainChecklist.map(item => ({ ...item, type: 'MAIN INPUT' })),
+                                              ...rawChecklist.map(item => ({ ...item, type: 'RAW MATERIAL' }))].map(item => (
+                                                <div
+                                                    key={`${item.type}-${item.key}`}
+                                                    className={`rounded-xl border p-4 flex justify-between items-center gap-4 ${
+                                                        item.isScanned
+                                                            ? 'bg-emerald-500/10 border-emerald-500/40'
+                                                            : 'bg-amber-500/5 border-amber-500/30'
+                                                    }`}
+                                                >
+                                                    <div className="min-w-0">
+                                                        <p className="text-[10px] tracking-widest font-black text-slate-500">{item.type}</p>
+                                                        <p className={`font-mono font-bold break-all mt-1 ${item.isScanned ? 'text-emerald-300' : 'text-amber-300'}`}>
+                                                            PN: {item.pn}
+                                                        </p>
+                                                        <p className="text-xs text-slate-500 mt-1 break-all">
+                                                            Nhận diện: {item.fixedString || 'Không khai báo fixedString'}
+                                                        </p>
+                                                    </div>
+                                                    <div className="text-right shrink-0">
+                                                        <p className={`text-xs font-black uppercase ${item.isScanned ? 'text-emerald-400' : 'text-amber-400'}`}>
+                                                            {item.isScanned ? 'Đã scan' : 'Chưa scan'}
+                                                        </p>
+                                                        <p className="text-xs text-slate-400 mt-1">
+                                                            {item.scanCount} mã · {item.totalQty} PCS
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                            {totalRequiredPNs === 0 && (
+                                                <div className="text-slate-500 italic">Model chưa khai báo danh sách vật tư bắt buộc.</div>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-3">
+                                        <h3 className="text-slate-400 font-bold uppercase text-sm border-b border-slate-700 pb-2">
+                                            Lịch sử tiêu hao vật tư ({masterData.mainInputs.length + masterData.rawMaterials.length})
+                                        </h3>
+                                        {[...masterData.mainInputs, ...masterData.rawMaterials].length === 0 ? (
+                                            <div className="min-h-[70px] flex items-center justify-center text-slate-500 italic">
+                                                Chưa có lịch sử scan.
+                                            </div>
+                                        ) : [...masterData.mainInputs, ...masterData.rawMaterials].map((item, i) => (
+                                            <div key={`${item.code}-${i}`} className="bg-slate-800/50 border border-slate-700 p-3 rounded-lg flex justify-between items-center hover:bg-slate-700 transition-colors">
+                                                <div>
+                                                    <p className="text-emerald-300 font-mono font-bold">{item.code}</p>
+                                                    <p className="text-slate-500 text-xs mt-1">PN: {item.pn} | Kích hoạt: {item.time}</p>
+                                                </div>
+                                                <span className="bg-slate-900 text-emerald-400 px-3 py-1 rounded font-bold border border-emerald-500/30">+{item.qty}</span>
+                                            </div>
+                                        ))}
+                                    </div>
                                 </div>
                             </div>
                         )}
@@ -553,7 +885,7 @@ const FrameAssyPackingMaster = () => {
                                                                 <span className={isCurrentActive ? "text-orange-300" : "text-slate-300"}>{item.code}</span>
                                                                 <div className="flex items-center gap-4">
                                                                     <span className="text-slate-400 text-xs">{item.time}</span>
-                                                                    {isCurrentActive && <button onClick={() => handleRemoveItem(box.id, idx)} className="text-slate-500 hover:text-red-400"><Trash2 size={18} /></button>}
+                                                                    {isCurrentActive && <button onClick={() => handleRemoveItem(box.id, idx, item)} className="text-slate-500 hover:text-red-400"><Trash2 size={18} /></button>}
                                                                 </div>
                                                             </div>
                                                         ))}
@@ -577,6 +909,81 @@ const FrameAssyPackingMaster = () => {
             {/* ======================================================== */}
             
             {/* 1. Modal Nhập QTY */}
+            {remainderModal.isOpen && (
+                <div className="absolute inset-0 z-[70] bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4">
+                    <div className="bg-slate-800 w-full max-w-lg rounded-2xl border border-amber-500/50 shadow-2xl p-6 animate-fade-in-up">
+                        <div className="flex justify-between items-start gap-4 mb-4 border-b border-slate-700 pb-3">
+                            <div>
+                                <h2 className="text-xl font-black text-amber-400">Xác nhận số lượng dư</h2>
+                                <p className="text-slate-400 text-sm mt-1">Batch đã được ghi nhận cho một WO trước đó.</p>
+                            </div>
+                            <button
+                                onClick={() => setRemainderModal(prev => ({ ...prev, isOpen: false, error: '' }))}
+                                disabled={remainderModal.isSubmitting}
+                                className="text-slate-400 hover:text-white disabled:opacity-50"
+                            >
+                                <X size={24}/>
+                            </button>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3 mb-5 text-sm">
+                            <div className="col-span-2 bg-slate-900 p-3 rounded-lg border border-slate-700">
+                                <p className="text-slate-500 text-xs">Batch</p>
+                                <p className="text-blue-300 font-mono font-bold break-all">{remainderModal.batch}</p>
+                                <p className="text-slate-500 text-xs mt-1">PN: {remainderModal.matchedRule?.partNumber}</p>
+                            </div>
+                            <div className="bg-slate-900 p-3 rounded-lg border border-slate-700">
+                                <p className="text-slate-500 text-xs">WO trước</p>
+                                <p className="text-white font-mono font-bold">{remainderModal.previousWO}</p>
+                            </div>
+                            <div className="bg-slate-900 p-3 rounded-lg border border-slate-700">
+                                <p className="text-slate-500 text-xs">Đang giữ</p>
+                                <p className="text-amber-300 font-mono font-bold">{remainderModal.previousQTY} PCS</p>
+                            </div>
+                        </div>
+
+                        <label className="block text-slate-300 font-bold mb-2">
+                            Remainder chuyển sang WO {remainderModal.requestedWO}
+                        </label>
+                        <input
+                            autoFocus
+                            type="number"
+                            min="1"
+                            max={Math.max(1, remainderModal.previousQTY - 1)}
+                            value={remainderModal.value}
+                            onChange={e => setRemainderModal(prev => ({ ...prev, value: e.target.value, error: '' }))}
+                            onKeyDown={e => e.key === 'Enter' && !remainderModal.isSubmitting && handleSubmitRemainder()}
+                            className="w-full bg-slate-900 border border-amber-500/50 text-white px-4 py-3 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none text-2xl font-mono text-center"
+                            placeholder={`1 - ${Math.max(1, remainderModal.previousQTY - 1)}`}
+                        />
+                        <p className="text-xs text-slate-500 mt-2">
+                            WO trước sẽ được chốt còn lại: {Math.max(0, remainderModal.previousQTY - (Number(remainderModal.value) || 0))} PCS.
+                        </p>
+
+                        {remainderModal.error && (
+                            <p className="text-red-400 text-sm font-bold mt-3">{remainderModal.error}</p>
+                        )}
+
+                        <div className="flex gap-3 mt-6">
+                            <button
+                                onClick={() => setRemainderModal(prev => ({ ...prev, isOpen: false, error: '' }))}
+                                disabled={remainderModal.isSubmitting}
+                                className="flex-1 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white py-3 rounded-lg font-bold"
+                            >
+                                HỦY
+                            </button>
+                            <button
+                                onClick={handleSubmitRemainder}
+                                disabled={remainderModal.isSubmitting}
+                                className="flex-1 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white py-3 rounded-lg font-bold"
+                            >
+                                {remainderModal.isSubmitting ? 'ĐANG XỬ LÝ...' : 'XÁC NHẬN'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {qtyModal.isOpen && (
                 <div className="absolute inset-0 z-50 bg-slate-900/90 backdrop-blur-sm flex items-center justify-center p-4">
                     <div className="bg-slate-800 w-full max-w-md rounded-2xl border border-emerald-500/50 shadow-2xl p-6">
@@ -623,7 +1030,7 @@ const FrameAssyPackingMaster = () => {
                             <p className="text-slate-300 text-lg mb-6">{qtyWarningModal.message}</p>
                             <div className="flex gap-4">
                                 <button onClick={() => setQtyWarningModal({ isOpen: false, boxId: null, message: '', isSkip: false })} className="flex-1 bg-slate-700 text-white font-bold py-4 rounded-xl">BỔ SUNG VẬT TƯ</button>
-                                <button onClick={() => proceedFinishBoxWithData(qtyWarningModal.boxId, activeBox.items, qtyWarningModal.isSkip, skipModal.reason)} className="flex-1 bg-orange-600 text-white font-black py-4 rounded-xl shadow-lg">XÁC NHẬN VẪN XUẤT</button>
+                                <button onClick={() => finishBox(qtyWarningModal.boxId, qtyWarningModal.isSkip, skipModal.reason)} className="flex-1 bg-orange-600 text-white font-black py-4 rounded-xl shadow-lg">XÁC NHẬN VẪN XUẤT</button>
                             </div>
                         </div>
                     </div>
