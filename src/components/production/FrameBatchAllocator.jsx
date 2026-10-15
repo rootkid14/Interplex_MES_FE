@@ -1,8 +1,12 @@
 import React, { useState, useEffect } from "react";
 import { ActionButton } from "../common/ActionButton";
-import { ScanLine, XCircle, CheckCircle, Package, Box, Printer, FilePlus, CheckSquare, Square, X, CheckCheck, Cpu, MousePointerClick, RefreshCcw, Trash2, Settings2, Edit3 } from "lucide-react";
+import { ScanLine, XCircle, CheckCircle, Package, Box, Printer, FilePlus, CheckSquare, Square, X, CheckCheck, Cpu, MousePointerClick, RefreshCcw, Trash2, Settings2, Edit3, Download } from "lucide-react";
 import useProductionStore from '../../store/productionStore';
 import { workstationAPI } from '../../api/workstationApi';
+
+// IPTH_ALLOCATOR_PRINTER_DOWNLOAD_V3: Keep filename stable when publishing new EXE builds.
+const ALLOCATOR_PRINTER_EXE = 'LambdaMES_BatchLabelPrinter.exe';
+const ALLOCATOR_PRINTER_URL = `${import.meta.env.BASE_URL}downloads/${ALLOCATOR_PRINTER_EXE}`;
 
 const FrameBatchAllocator = () => {
     const currentAllocation = useProductionStore(state => state.currentAllocation);
@@ -22,6 +26,16 @@ const FrameBatchAllocator = () => {
     const [showPrintTypeSelector, setShowPrintTypeSelector] = useState(false);
     const [printMode, setPrintMode] = useState('none'); 
     const [selectedForPrint, setSelectedForPrint] = useState([]);
+
+    // IPTH_ALLOCATOR_NEXT_PROCESS_V1: One routing lookup per WO + allocated PN.
+    const [routingRetry, setRoutingRetry] = useState(0);
+    // IPTH_ALLOCATOR_NEXT_PROCESS_V2: Independent of the batch allocation Auto/Manual tabs.
+    const [routingMode, setRoutingMode] = useState('auto');
+    const [manualTargetPn, setManualTargetPn] = useState('');
+    const [confirmedTargetPn, setConfirmedTargetPn] = useState('');
+    const [nextProcessInfo, setNextProcessInfo] = useState({
+        contextKey: '', status: 'idle', value: '', targetPn: '', error: ''
+    });
 
     const wo = woData?.WO;
     const currentWOStatus = liveWOData?.Status ?? woData?.Status;
@@ -46,6 +60,94 @@ const FrameBatchAllocator = () => {
     };
 
     useEffect(() => { loadStatus(); }, [wo]);
+
+    // IPTH_ALLOCATOR_NEXT_PROCESS_V2: New WO always starts in automatic routing mode.
+    useEffect(() => {
+        setRoutingMode('auto');
+        setManualTargetPn('');
+        setConfirmedTargetPn('');
+    }, [wo]);
+
+    const confirmManualDestination = () => {
+        const pn = manualTargetPn.trim().toUpperCase();
+        if (!pn) return;
+        setConfirmedTargetPn(pn);
+        // Allow explicit re-query even if the PN is unchanged.
+        setRoutingRetry(n => n + 1);
+    };
+
+    // IPTH_ALLOCATOR_NEXT_PROCESS_V1: Never infer a Next Process by array index alone.
+    // Allocation WO is the scanned SAP JobNo (confirmed by WoValidation backend).
+    const allocatedPn = String((cards.length > 0 ? cards[0]?.pn : config.pn) || woData?.ModelNO || '')
+        .trim().toUpperCase();
+    const normalizedManualPn = manualTargetPn.trim().toUpperCase();
+    const manualConfirmed = routingMode === 'manual' && confirmedTargetPn &&
+        normalizedManualPn === confirmedTargetPn;
+    const routingContextKey = wo && allocatedPn && (routingMode === 'auto' || manualConfirmed)
+        ? `${String(wo).trim()}::${allocatedPn}::${routingMode}::${routingMode === 'manual' ? confirmedTargetPn : ''}`
+        : '';
+    const routingReady = Boolean(routingContextKey &&
+        nextProcessInfo.contextKey === routingContextKey &&
+        nextProcessInfo.status === 'ready');
+
+    useEffect(() => {
+        if (!routingContextKey) {
+            setNextProcessInfo({ contextKey: '', status: 'idle', value: '', targetPn: '', error: '' });
+            return;
+        }
+        let cancelled = false;
+        setNextProcessInfo({ contextKey: routingContextKey, status: 'loading', value: '', targetPn: '', error: '' });
+
+        const resolve = async () => {
+            try {
+                const result = await workstationAPI.resolveAllocatorRouting(wo, routingMode, routingMode === 'manual' ? confirmedTargetPn : '');
+                if (!result?.success || !Array.isArray(result.routingPath)) {
+                    throw new Error('Routing API không trả về routingPath hợp lệ.');
+                }
+                const startPn = String(result.startComponent || '').trim().toUpperCase();
+                if (startPn !== allocatedPn) {
+                    throw new Error(`PN Allocator (${allocatedPn}) khác PN của JOB (${startPn}). Không thể in tem.`);
+                }
+                if (String(result.jobNo || '').trim() !== String(wo).trim()) {
+                    throw new Error('JOB trong routing không khớp WO hiện tại.');
+                }
+                if (String(result.mode || '').toLowerCase() !== routingMode) {
+                    throw new Error('Chế độ routing trong response không khớp yêu cầu.');
+                }
+                if (routingMode === 'manual' &&
+                    String(result.targetProduct || '').trim().toUpperCase() !== confirmedTargetPn) {
+                    throw new Error('PN đích trong response khác PN đã xác nhận.');
+                }
+                const path = result.routingPath;
+                const indices = path.map((step, index) =>
+                    (Array.isArray(step.Components) && step.Components.some(p =>
+                        String(p || '').trim().toUpperCase() === allocatedPn)) ? index : -1
+                ).filter(index => index >= 0);
+                if (indices.length !== 1) {
+                    throw new Error(`Không xác định duy nhất bước của PN ${allocatedPn} trong routing.`);
+                }
+                const next = path[indices[0] + 1];
+                const nextProcess = next ? String(next.Process || '').trim() : 'Finished Good';
+                if (!nextProcess) {
+                    throw new Error('Bước kế tiếp không có mô tả Process.');
+                }
+                if (!cancelled) setNextProcessInfo({
+                    contextKey: routingContextKey, status: 'ready', value: nextProcess,
+                    targetPn: String(result.targetProduct || '').trim(), error: ''
+                });
+            } catch (error) {
+                const detail = error?.response?.data?.detail;
+                const serverMessage = typeof detail === 'string'
+                    ? detail : (detail?.message || detail?.code || '');
+                const message = serverMessage || error?.message || 'Không thể truy vấn routing.';
+                if (!cancelled) setNextProcessInfo({
+                    contextKey: routingContextKey, status: 'error', value: '', targetPn: '', error: String(message)
+                });
+            }
+        };
+        resolve();
+        return () => { cancelled = true; };
+    }, [wo, allocatedPn, routingContextKey, routingRetry, routingMode, confirmedTargetPn]);
 
     // TÍNH TOÁN TIẾN ĐỘ
     const totalProducedOK = liveWOData?.QTY_OK ?? woData?.QTY_OK ?? 0;
@@ -154,12 +256,43 @@ const FrameBatchAllocator = () => {
         setSelectedForPrint(targetCards);
     };
 
+    // IPTH_ALLOCATOR_PRINTER_DOWNLOAD_V3: Check file availability; never download SPA HTML as .exe.
+    const handlePrinterAppDownload = async (event) => {
+        event.preventDefault();
+        const installerUrl = new URL(ALLOCATOR_PRINTER_URL, window.location.href);
+        installerUrl.searchParams.set('v', String(Date.now())); // avoid a cached older installer
+        try {
+            const response = await fetch(installerUrl.toString(), {
+                method: 'HEAD', cache: 'no-store'
+            });
+            const contentType = (response.headers.get('content-type') || '').toLowerCase();
+            if (!response.ok || contentType.includes('text/html')) {
+                throw new Error('Installer not found or the server returned HTML.');
+            }
+            const link = document.createElement('a');
+            link.href = installerUrl.toString();
+            link.download = ALLOCATOR_PRINTER_EXE;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+        } catch (error) {
+            console.warn('Printer installer download failed:', error);
+            alert('Chưa tìm thấy phần mềm in tem trên máy chủ. Vui lòng liên hệ quản trị viên.');
+        }
+    };
+
     const executePrint = async () => {
         if (selectedForPrint.length === 0) return alert("Vui lòng chọn ít nhất 1 thẻ để in!");
+        // IPTH_ALLOCATOR_NEXT_PROCESS_V1: Do not export a label with a missing or stale destination.
+        if (!routingReady) return alert('Chưa xác định được NEXT PROCESS. Vui lòng kiểm tra Routing và thử lại.');
         try {
+            // IPTH_ALLOCATOR_NEXT_PROCESS_V1: Keep first 3 legacy columns unchanged.
+            // Replace commas and CR/LF so the fourth column stays a single CSV field.
+            const printedNextProcess = nextProcessInfo.value.replace(/[,\r\n]+/g, ' ').trim();
+            if (!printedNextProcess) throw new Error('NEXT PROCESS rỗng; không xuất tem.');
             const fileContent = selectedForPrint.map(barcode => {
                 const targetCard = cards.find(c => c.barcode === barcode);
-                return `${barcode},${wo},${targetCard ? targetCard.qty : 0}`; 
+                return `${barcode},${wo},${targetCard ? targetCard.qty : 0},${printedNextProcess}`; 
             }).join('\n');
 
             const blob = new Blob([fileContent], { type: 'text/plain' });
@@ -293,6 +426,77 @@ const FrameBatchAllocator = () => {
                 </div>
             </div>
 
+            {/* IPTH_ALLOCATOR_NEXT_PROCESS_V2: Destination mode affects printing only, not batch allocation. */}
+            {wo && (
+                <div className="bg-slate-800 border-b border-slate-700 px-4 sm:px-6 py-3">
+                    <div className="flex flex-wrap items-center gap-3 mb-2">
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Routing đích</span>
+                        <div role="group" aria-label="Chọn cách xác định PN đích" className="inline-flex rounded-lg border border-slate-600 bg-slate-950 p-0.5">
+                            <button type="button" aria-pressed={routingMode === 'auto'} disabled={isPrintModeActive}
+                                onClick={() => { setRoutingMode('auto'); setConfirmedTargetPn(''); }}
+                                className={`px-3 py-1.5 text-xs font-bold rounded-md transition-colors ${routingMode === 'auto' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'} ${isPrintModeActive ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                                AUTO
+                            </button>
+                            <button type="button" aria-pressed={routingMode === 'manual'} disabled={isPrintModeActive}
+                                onClick={() => { setRoutingMode('manual'); setConfirmedTargetPn(''); }}
+                                className={`px-3 py-1.5 text-xs font-bold rounded-md transition-colors ${routingMode === 'manual' ? 'bg-orange-600 text-white' : 'text-slate-400 hover:text-white'} ${isPrintModeActive ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                                MANUAL
+                            </button>
+                        </div>
+                        {routingMode === 'manual' && (
+                            <div className="flex flex-wrap items-center gap-2">
+                                <label htmlFor="allocator-routing-target-pn" className="text-xs font-bold text-slate-300">Target PN</label>
+                                <input id="allocator-routing-target-pn" type="text" autoComplete="off"
+                                    value={manualTargetPn} disabled={isPrintModeActive}
+                                    onChange={(e) => {
+                                        setManualTargetPn(e.target.value.toUpperCase());
+                                        setConfirmedTargetPn('');
+                                    }}
+                                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); confirmManualDestination(); } }}
+                                    placeholder="Nhập PN thành phẩm"
+                                    className="w-52 max-w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-sm font-mono text-white outline-none focus:border-orange-400 disabled:opacity-50" />
+                                <button type="button" onClick={confirmManualDestination}
+                                    disabled={isPrintModeActive || !normalizedManualPn}
+                                    className="rounded-lg bg-orange-600 px-3 py-2 text-xs font-bold text-white hover:bg-orange-500 disabled:opacity-40 disabled:cursor-not-allowed">
+                                    XÁC NHẬN
+                                </button>
+                            </div>
+                        )}
+                        {/* IPTH_ALLOCATOR_PRINTER_DOWNLOAD_V3: Windows label-printer installer. */}
+                        <a href={ALLOCATOR_PRINTER_URL} download={ALLOCATOR_PRINTER_EXE}
+                            onClick={handlePrinterAppDownload}
+                            title="Tải phần mềm in tem Zebra cho Windows"
+                            className="ml-auto inline-flex items-center gap-2 rounded-lg border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-xs font-bold text-sky-200 hover:bg-sky-500/20 hover:text-white transition-colors"
+                        >
+                            <Download size={15} aria-hidden="true" /> TẢI PHẦN MỀM IN TEM (.EXE)
+                        </a>
+                    </div>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="min-w-0">
+                            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">NEXT PROCESS</div>
+                            <div className={`text-sm font-bold ${routingReady ? 'text-emerald-300' : 'text-amber-300'}`}>
+                                {routingReady ? nextProcessInfo.value :
+                                    (routingMode === 'manual' && !manualConfirmed
+                                        ? 'Nhập Target PN và nhấn XÁC NHẬN trước khi in.'
+                                        : (nextProcessInfo.status === 'error' && nextProcessInfo.contextKey === routingContextKey
+                                            ? `Không xác định được: ${nextProcessInfo.error}`
+                                            : 'Đang xác định công đoạn tiếp theo...'))}
+                            </div>
+                            {routingReady && nextProcessInfo.targetPn && (
+                                <div className="text-[11px] text-slate-400 mt-1">Target PN: {nextProcessInfo.targetPn}</div>
+                            )}
+                        </div>
+                        {!routingReady && nextProcessInfo.status === 'error' && nextProcessInfo.contextKey === routingContextKey && (
+                            <button type="button" onClick={() => setRoutingRetry(n => n + 1)}
+                                disabled={isPrintModeActive}
+                                className="text-xs font-bold px-3 py-2 rounded-lg border border-amber-500/40 text-amber-300 hover:bg-slate-700 disabled:opacity-40">
+                                THỬ LẠI
+                            </button>
+                        )}
+                    </div>
+                </div>
+            )}
+
             {/* THANH CÔNG CỤ (Duyệt/In) */}
             {!isPrintModeActive && cards.length > 0 && (
                 <div className="bg-slate-800/90 backdrop-blur-md border-b border-slate-700 p-3 flex flex-wrap gap-3 shadow-sm z-20">
@@ -300,7 +504,7 @@ const FrameBatchAllocator = () => {
                         <CheckCheck size={18}/> DUYỆT TẤT CẢ
                     </button>
                     <div className="w-px bg-slate-600 mx-1 hidden sm:block"></div>
-                    <button onClick={() => setShowPrintTypeSelector(true)} className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-slate-700 hover:bg-slate-600 text-white px-6 py-2.5 rounded-xl font-bold text-sm shadow-lg transition-colors">
+                    <button onClick={() => setShowPrintTypeSelector(true)} disabled={!routingReady} title={routingReady ? "In tem có NEXT PROCESS" : "Chưa có NEXT PROCESS hợp lệ"} className={`flex-1 sm:flex-none flex items-center justify-center gap-2 bg-slate-700 hover:bg-slate-600 text-white px-6 py-2.5 rounded-xl font-bold text-sm shadow-lg transition-colors ${!routingReady ? "opacity-50 cursor-not-allowed" : ""}`}>
                         <Printer size={18}/> IN TEM MÃ VẠCH
                     </button>
                 </div>
@@ -412,7 +616,7 @@ const FrameBatchAllocator = () => {
                         <button onClick={cancelPrintMode} className="text-slate-400 hover:bg-slate-700 text-xs font-bold px-4 py-2.5 rounded-full transition-colors">HỦY</button>
                         <button 
                             onClick={executePrint} 
-                            disabled={selectedForPrint.length === 0} 
+                            disabled={selectedForPrint.length === 0 || !routingReady} 
                             className={`text-xs font-black px-6 py-2.5 rounded-full flex items-center gap-1.5 transition-all whitespace-nowrap ${selectedForPrint.length === 0 ? 'bg-slate-700 text-slate-500' : 'bg-white text-slate-900 hover:bg-slate-200 shadow-lg'}`}
                         >
                             <Printer size={16}/> XÁC NHẬN IN

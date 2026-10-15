@@ -1,0 +1,18 @@
+{
+  "version": "1.0.0",
+  "created_at": "2026-10-14T16:03:10.350419",
+  "files": [
+    {
+      "relative_path": "src/api/workstationApi.js",
+      "backup_name": "original_0.bak",
+      "original_sha256": "e0314084aa2d48868a51547ad14b085d7bcc8d7f0811a999ef6ef36d62f8ea1f",
+      "patched_sha256": "ac3715b2c5b2a53af05d405ca41adc0941e31e93d46a856f0a255a6a065d8526"
+    },
+    {
+      "relative_path": "src/components/production/FrameBatchAllocator.jsx",
+      "backup_name": "original_1.bak",
+      "original_sha256": "e0ad2cfdfa31991c1e83a724379e03f9844d6e5c67ff35e4eb09ce1a0e32f68b",
+      "patched_sha256": "b6cf6b8eb47fd5ba1d32b9e42a47f63328aeb28cdc0b7881d42d45c422e638d7"
+    }
+  ]
+}

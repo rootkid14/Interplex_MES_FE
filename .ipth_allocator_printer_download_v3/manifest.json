@@ -1,0 +1,8 @@
+{
+  "version": "3.0.0",
+  "timestamp": "2026-10-14T16:31:18.090201",
+  "path": "src/components/production/FrameBatchAllocator.jsx",
+  "original_sha256": "ae7f2a7adc05b5bcffd9e6ba8517f01c34a3d90f41b9baa6b18cee47d736b587",
+  "patched_sha256": "9274965ddbcfd69e43f6a9d695adb7f055338d89ff5ef988b3bbf1db126a7262",
+  "backup_file": "FrameBatchAllocator.original.bak"
+}

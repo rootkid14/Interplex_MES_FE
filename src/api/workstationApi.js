@@ -224,6 +224,25 @@ export const workstationAPI = {
         }
     },
   
+    // IPTH_ALLOCATOR_NEXT_PROCESS_V2: Auto/Manual destination, read-only routing preview.
+    resolveAllocatorRouting: async (jobNo, mode = 'auto', targetPn = '') => {
+        if (mode !== 'auto' && mode !== 'manual') {
+            throw new Error('Chế độ routing không hợp lệ.');
+        }
+        const pn = String(targetPn || '').trim().toUpperCase();
+        if (mode === 'manual' && !pn) {
+            throw new Error('Manual Mode yêu cầu Target PN.');
+        }
+        const payload = {
+            job_no: String(jobNo).trim(),
+            mode,
+            issue_trucking_no: false,
+            force_regenerate: true,
+            ...(mode === 'manual' ? { target_pn: pn } : {}),
+        };
+        const response = await apiClient.post('/bom/routing/resolve', payload);
+        return response.data;
+    },
     getAllocationStatus: async (wo) => {
         return (await apiClient.get(`/allocation/status/${wo}`)).data;
     },
