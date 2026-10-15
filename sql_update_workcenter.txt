@@ -1,0 +1,238 @@
+-- INTERPLEX MES - Simple WorkCenter_Master full replacement
+-- SOURCE: MC-LINE list.xlsx (166 distinct StationType + LineCode pairs)
+-- Excel has duplicate Stamping/M156; included ONCE.
+-- IMPORTANT: Existing IDs WILL CHANGE if ID is IDENTITY. This may break
+-- historical references that are NOT enforced by foreign keys.
+-- IMPORTANT: Back up the database before APPLY, and verify current database.
+-- Only StationType and LineCode are inserted. No schema changes.
+-- Select and execute the ENTIRE script (Ctrl+A / Execute).
+
+SET NOCOUNT ON;
+SET XACT_ABORT ON;
+
+DECLARE @Apply bit = 1;    -- Default SAFE PREVIEW. Set to 1 only after backup/check.
+DECLARE @ExpectedOldRows int = 163;
+
+SELECT DB_NAME() AS ConnectedDatabase,
+       (SELECT COUNT(*) FROM dbo.WorkCenter_Master) AS ExistingRows,
+       166 AS DesiredRows,
+       @Apply AS ApplyMode;
+
+IF @Apply = 0
+BEGIN
+    PRINT 'PREVIEW: no rows changed. Set @Apply=1 to replace the contents.';
+    RETURN;
+END;
+
+BEGIN TRY
+    BEGIN TRANSACTION;
+
+    -- A simple DELETE/INSERT cannot preserve IDs. Block declared FK dependencies;
+    -- especially important when cascading DELETE is configured.
+    IF EXISTS (
+        SELECT 1 FROM sys.foreign_keys
+        WHERE referenced_object_id = OBJECT_ID(N'dbo.WorkCenter_Master')
+    )
+        THROW 52031, 'Foreign keys reference WorkCenter_Master. DELETE/INSERT is unsafe; aborting.', 1;
+
+    -- Keep this simple approach limited to the expected database state.
+    IF (SELECT COUNT(*) FROM dbo.WorkCenter_Master WITH (TABLOCKX, HOLDLOCK)) <> @ExpectedOldRows
+        THROW 52032, 'Existing row count differs from 163. Aborting: verify current data.', 1;
+
+    -- Requires an IDENTITY ID column or equivalent default for ID.
+    IF ISNULL(COLUMNPROPERTY(OBJECT_ID(N'dbo.WorkCenter_Master'), N'ID', 'IsIdentity'), 0) <> 1
+        THROW 52033, 'ID is not IDENTITY; INSERT requires an ID strategy. Aborting.', 1;
+
+    DELETE FROM dbo.WorkCenter_Master;
+
+    INSERT INTO dbo.WorkCenter_Master (StationType, LineCode)
+    VALUES
+    (N'Stamping', N'ROBOT-LINE'),
+    (N'CNC', N'C-01'),
+    (N'Welding/Brazing', N'CNC1'),
+    (N'Powder coating', N'AUTO LINE'),
+    (N'Plating', N'Line 1'),
+    (N'Assembly', N'CNC MK2'),
+    (N'NCT', N'T6000'),
+    (N'Molding', N'Molding 1'),
+    (N'Stamping', N'M151'),
+    (N'CNC', N'C-02'),
+    (N'Welding/Brazing', N'CNC2'),
+    (N'Powder coating', N'MANUAL LINE'),
+    (N'Plating', N'Line 2'),
+    (N'Assembly', N'CNC MK3'),
+    (N'NCT', N'BK63T'),
+    (N'Molding', N'Molding 2'),
+    (N'Stamping', N'M152'),
+    (N'CNC', N'C-03'),
+    (N'Welding/Brazing', N'CNC3'),
+    (N'Plating', N'Line Sealer'),
+    (N'Assembly', N'P63'),
+    (N'Stamping', N'M153'),
+    (N'CNC', N'C-04'),
+    (N'Welding/Brazing', N'CNC4'),
+    (N'Plating', N'Line Washing'),
+    (N'Assembly', N'M61'),
+    (N'Stamping', N'M154'),
+    (N'CNC', N'C-05'),
+    (N'Welding/Brazing', N'CNC5'),
+    (N'Assembly', N'P65'),
+    (N'Stamping', N'M155'),
+    (N'CNC', N'C-06'),
+    (N'Welding/Brazing', N'CNC6'),
+    (N'Assembly', N'P61'),
+    (N'Stamping', N'M156'),
+    (N'CNC', N'C-07'),
+    (N'Welding/Brazing', N'CNC7'),
+    (N'Assembly', N'PF1'),
+    (N'Stamping', N'P161'),
+    (N'CNC', N'C-08'),
+    (N'Welding/Brazing', N'CNC8'),
+    (N'Assembly', N'PF2'),
+    (N'Stamping', N'P162'),
+    (N'CNC', N'C-09'),
+    (N'Welding/Brazing', N'CNC9'),
+    (N'Assembly', N'HP1'),
+    (N'Stamping', N'P163'),
+    (N'CNC', N'C-10'),
+    (N'Welding/Brazing', N'CNC10'),
+    (N'Assembly', N'HP2'),
+    (N'Stamping', N'P164'),
+    (N'CNC', N'C-11'),
+    (N'Welding/Brazing', N'CNC11'),
+    (N'Assembly', N'HP3'),
+    (N'Stamping', N'P165'),
+    (N'CNC', N'C-12'),
+    (N'Welding/Brazing', N'CNC12'),
+    (N'Assembly', N'HP4'),
+    (N'Stamping', N'P166'),
+    (N'Welding/Brazing', N'W1'),
+    (N'Assembly', N'HP5'),
+    (N'Stamping', N'P201'),
+    (N'Welding/Brazing', N'W2'),
+    (N'Assembly', N'HP6'),
+    (N'Stamping', N'P202'),
+    (N'Welding/Brazing', N'W3'),
+    (N'Assembly', N'H1'),
+    (N'Stamping', N'P203'),
+    (N'Welding/Brazing', N'W4'),
+    (N'Assembly', N'H2'),
+    (N'Stamping', N'P204'),
+    (N'Assembly', N'H3'),
+    (N'Stamping', N'P205'),
+    (N'Assembly', N'H4'),
+    (N'Stamping', N'P208'),
+    (N'Assembly', N'H5'),
+    (N'Stamping', N'P209'),
+    (N'Assembly', N'H6'),
+    (N'Stamping', N'P210'),
+    (N'Assembly', N'PT4'),
+    (N'Stamping', N'P251'),
+    (N'Assembly', N'TD1'),
+    (N'Stamping', N'P252'),
+    (N'Assembly', N'TD2'),
+    (N'Stamping', N'P253'),
+    (N'Assembly', N'TD18'),
+    (N'Stamping', N'P254'),
+    (N'Assembly', N'TD4'),
+    (N'Stamping', N'P255'),
+    (N'Assembly', N'TD5'),
+    (N'Stamping', N'P301'),
+    (N'Assembly', N'T8'),
+    (N'Stamping', N'P302'),
+    (N'Assembly', N'HS1'),
+    (N'Stamping', N'P303'),
+    (N'Assembly', N'L1'),
+    (N'Stamping', N'P401'),
+    (N'Assembly', N'AS1'),
+    (N'Stamping', N'P402'),
+    (N'Assembly', N'AS2'),
+    (N'Stamping', N'P403'),
+    (N'Assembly', N'Line 01'),
+    (N'Stamping', N'P404'),
+    (N'Assembly', N'Line 02'),
+    (N'Stamping', N'P405'),
+    (N'Assembly', N'Line 03'),
+    (N'Stamping', N'P501'),
+    (N'Assembly', N'Line 04'),
+    (N'Stamping', N'P502'),
+    (N'Assembly', N'Line 05'),
+    (N'Stamping', N'M51'),
+    (N'Assembly', N'Line 06'),
+    (N'Stamping', N'M52'),
+    (N'Assembly', N'Line 07'),
+    (N'Stamping', N'M53'),
+    (N'Assembly', N'Line 08'),
+    (N'Stamping', N'M80'),
+    (N'Assembly', N'Line 09'),
+    (N'Stamping', N'M81'),
+    (N'Assembly', N'Line 10'),
+    (N'Stamping', N'M82'),
+    (N'Assembly', N'Line 11'),
+    (N'Stamping', N'M83'),
+    (N'Assembly', N'Line 12'),
+    (N'Stamping', N'P84'),
+    (N'Assembly', N'Line 13'),
+    (N'Stamping', N'P85'),
+    (N'Assembly', N'Line 14'),
+    (N'Stamping', N'P86'),
+    (N'Assembly', N'Line 15'),
+    (N'Stamping', N'P151'),
+    (N'Assembly', N'Line 16'),
+    (N'Stamping', N'R111'),
+    (N'Assembly', N'Line 17'),
+    (N'Stamping', N'R112'),
+    (N'Assembly', N'Line 18'),
+    (N'Stamping', N'R113'),
+    (N'Assembly', N'Line 19'),
+    (N'Stamping', N'M113'),
+    (N'Assembly', N'Line 20'),
+    (N'Stamping', N'M114'),
+    (N'Stamping', N'M115'),
+    (N'Stamping', N'M116'),
+    (N'Stamping', N'M201'),
+    (N'Stamping', N'M202'),
+    (N'Stamping', N'M203'),
+    (N'Stamping', N'M204'),
+    (N'Stamping', N'M205'),
+    (N'Stamping', N'M206'),
+    (N'Stamping', N'M207'),
+    (N'Stamping', N'M208'),
+    (N'Stamping', N'M209'),
+    (N'Stamping', N'M100'),
+    (N'Stamping', N'P111'),
+    (N'Stamping', N'P112'),
+    (N'Stamping', N'P113'),
+    (N'Stamping', N'P115'),
+    (N'Stamping', N'M118'),
+    (N'Stamping', N'R120'),
+    (N'Stamping', N'M163'),
+    (N'Stamping', N'M164'),
+    (N'Stamping', N'M165'),
+    (N'Stamping', N'M162'),
+    (N'Stamping', N'M161'),
+    (N'Stamping', N'P116'),
+    (N'Stamping', N'P117');
+
+    IF (SELECT COUNT(*) FROM dbo.WorkCenter_Master) <> 166
+        THROW 52034, 'Unexpected final count (must be 166). ROLLBACK.', 1;
+
+    IF EXISTS (
+        SELECT StationType, LineCode
+        FROM dbo.WorkCenter_Master
+        GROUP BY StationType, LineCode
+        HAVING COUNT(*) > 1
+    )
+        THROW 52035, 'Duplicate Workcenters after INSERT. ROLLBACK.', 1;
+
+    COMMIT TRANSACTION;
+    PRINT 'SUCCESS: WorkCenter_Master replaced with 166 unique workcenters.';
+    SELECT StationType, COUNT(*) AS LineCount
+    FROM dbo.WorkCenter_Master
+    GROUP BY StationType
+    ORDER BY StationType;
+END TRY
+BEGIN CATCH
+    IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+    THROW;
+END CATCH;
