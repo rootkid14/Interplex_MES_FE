@@ -224,6 +224,35 @@ export const workstationAPI = {
         }
     },
   
+    // IPTH_ALLOCATOR_ROUTING_V4: Read-only FERT options, separate from route generation.
+    getAllocatorTargetCandidates: async (jobNo) => {
+        const response = await apiClient.get(`/bom/routing/candidates/${encodeURIComponent(String(jobNo).trim())}`);
+        return response.data;
+    },
+    // V4.1: Outsource uses New Part Number as the current PN, then selects
+    // an FERT target exactly like Inhouse allocation. No SAP JOB lookup.
+    getAllocatorTargetCandidatesByPn: async (currentPn) => {
+        const pn = String(currentPn || '').trim().toUpperCase();
+        if (!pn) throw new Error('Thiếu New Part Number (Sau Outsource).');
+        const response = await apiClient.get(`/bom/routing/candidates/by-pn/${encodeURIComponent(pn)}`);
+        return response.data;
+    },
+    resolveAllocatorRoutingByPn: async (currentPn, targetPn) => {
+        const start = String(currentPn || '').trim().toUpperCase();
+        const target = String(targetPn || '').trim().toUpperCase();
+        if (!start || !target) throw new Error('Thiếu Current PN hoặc Target PN.');
+        const response = await apiClient.post('/bom/routing/resolve-by-pn', {
+            start_pn: start, target_pn: target,
+        });
+        return response.data;
+    },
+    resolveOutsourceTransition: async (currentPn, nextPn) => {
+        const response = await apiClient.post('/bom/routing/transition', {
+            current_pn: String(currentPn).trim().toUpperCase(),
+            next_pn: String(nextPn).trim().toUpperCase(),
+        });
+        return response.data;
+    },
     // IPTH_ALLOCATOR_NEXT_PROCESS_V2: Auto/Manual destination, read-only routing preview.
     resolveAllocatorRouting: async (jobNo, mode = 'auto', targetPn = '') => {
         if (mode !== 'auto' && mode !== 'manual') {

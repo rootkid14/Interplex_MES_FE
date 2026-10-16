@@ -4,6 +4,7 @@ import { Truck, XCircle, CheckCircle, Package, Box, Printer, FilePlus, CheckSqua
 import useProductionStore from '../../store/productionStore';
 import { workstationAPI } from '../../api/workstationApi';
 import { modelConfigAPI } from "../../api/modelconfigApi";
+import { normalizeAllocatorPn, allocatorRoutingError, extractAllocatorProcess, formatAllocatorLabelRow } from '../../utils/allocatorRoutingV4';
 
 const FrameOutSourceAllocator = () => {
     // ==========================================
@@ -27,6 +28,81 @@ const FrameOutSourceAllocator = () => {
     const [selectedForPrint, setSelectedForPrint] = useState([]);
 
     const wo = woData?.WO;
+
+    // V4.1: The NEW PN after outsourcing is the CURRENT PN of the downstream route.
+    // The original SAP ModelNO is NOT used to resolve downstream operations.
+    const [candidateRetry, setCandidateRetry] = useState(0);
+    const [routingRetry, setRoutingRetry] = useState(0);
+    const [selectedTargetPn, setSelectedTargetPn] = useState('');
+    const [manualNextProcess, setManualNextProcess] = useState('');
+    const [candidateInfo, setCandidateInfo] = useState({ key: '', status: 'idle', items: [], error: '' });
+    const [routingInfo, setRoutingInfo] = useState({ key: '', status: 'idle', nextProcess: '', error: '' });
+
+    const currentPn = normalizeAllocatorPn((cards.length ? cards[0]?.pn : config.pn) || '');
+    const candidateKey = wo && currentPn ? `${String(wo).trim()}::${currentPn}::r${candidateRetry}` : '';
+    const candidatesReady = Boolean(candidateKey && candidateInfo.key === candidateKey && candidateInfo.status === 'ready');
+    const selectedValid = Boolean(candidatesReady && candidateInfo.items.includes(selectedTargetPn));
+    const routeKey = selectedValid ? `${candidateKey}::${selectedTargetPn}::r${routingRetry}` : '';
+    const routingReady = Boolean(routeKey && routingInfo.key === routeKey && routingInfo.status === 'ready');
+    const candidatesFailed = Boolean((wo && !currentPn) ||
+        (candidateKey && candidateInfo.key === candidateKey && candidateInfo.status === 'error'));
+    const routingFailed = Boolean(routeKey && routingInfo.key === routeKey && routingInfo.status === 'error');
+    const manualFallback = candidatesFailed || routingFailed;
+    const labelReady = Boolean(wo && !loading && (routingReady || manualFallback));
+    const printableNextProcess = routingReady ? routingInfo.nextProcess : (manualNextProcess.trim() || '-');
+
+    useEffect(() => {
+        setSelectedTargetPn('');
+        setManualNextProcess('');
+        if (!candidateKey) {
+            setCandidateInfo({ key: '', status: 'idle', items: [], error: '' });
+            return;
+        }
+        let cancelled = false;
+        setCandidateInfo({ key: candidateKey, status: 'loading', items: [], error: '' });
+        (async () => {
+            try {
+                const res = await workstationAPI.getAllocatorTargetCandidatesByPn(currentPn);
+                if (!res?.success || normalizeAllocatorPn(res.startComponent) !== currentPn ||
+                    !Array.isArray(res.candidateEndPns) || !res.candidateEndPns.length) {
+                    throw new Error('Không tìm thấy danh sách Target PN hợp lệ.');
+                }
+                const items = [...new Set(res.candidateEndPns.map(normalizeAllocatorPn).filter(Boolean))].sort();
+                if (!items.length) throw new Error('Danh sách PN đích rỗng.');
+                if (!cancelled) {
+                    setCandidateInfo({ key: candidateKey, status: 'ready', items, error: '' });
+                    setSelectedTargetPn(items[0]);
+                }
+            } catch (error) {
+                if (!cancelled) setCandidateInfo({ key: candidateKey, status: 'error', items: [], error: allocatorRoutingError(error) });
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [candidateKey]);
+
+    useEffect(() => {
+        setManualNextProcess('');
+        if (!routeKey) {
+            setRoutingInfo({ key: '', status: 'idle', nextProcess: '', error: '' });
+            return;
+        }
+        let cancelled = false;
+        setRoutingInfo({ key: routeKey, status: 'loading', nextProcess: '', error: '' });
+        (async () => {
+            try {
+                const res = await workstationAPI.resolveAllocatorRoutingByPn(currentPn, selectedTargetPn);
+                if (!res?.success || normalizeAllocatorPn(res.startComponent) !== currentPn ||
+                    normalizeAllocatorPn(res.targetProduct) !== selectedTargetPn) {
+                    throw new Error('Routing response không khớp PN hiện tại hoặc PN đích.');
+                }
+                const { nextProcess } = extractAllocatorProcess(res.routingPath, currentPn);
+                if (!cancelled) setRoutingInfo({ key: routeKey, status: 'ready', nextProcess, error: '' });
+            } catch (error) {
+                if (!cancelled) setRoutingInfo({ key: routeKey, status: 'error', nextProcess: '', error: allocatorRoutingError(error) });
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [routeKey]);
 
     // ==========================================
     // 2. DATA FETCHING
@@ -168,12 +244,14 @@ const FrameOutSourceAllocator = () => {
 
     const executePrint = async () => {
         if (selectedForPrint.length === 0) return alert("Vui lòng chọn ít nhất 1 thẻ để in!");
-        
+        if (!labelReady) return alert('Đang xác định Next Process. Vui lòng thử lại.');
         try {
             const fileContent = selectedForPrint.map(barcode => {
                 const targetCard = cards.find(c => c.barcode === barcode);
-                const qty = targetCard ? targetCard.qty : 0;
-                return `${barcode},OS${wo},${qty}`; 
+                return formatAllocatorLabelRow([
+                    barcode, `OS${wo}`, targetCard ? targetCard.qty : 0,
+                    currentPn || '-', 'Outsource', printableNextProcess
+                ]);
             }).join('\n');
             const blob = new Blob([fileContent], { type: 'text/plain' });
             const url = URL.createObjectURL(blob);
@@ -314,6 +392,54 @@ const FrameOutSourceAllocator = () => {
                 </div>
             </div>
 
+            {/* V4.1: Outsource re-labeling starts a downstream route at New Part Number. */}
+            {wo && (
+                <div className="bg-slate-800 border-b border-slate-700 px-4 sm:px-6 py-3 space-y-3">
+                    <div className="flex flex-wrap items-end gap-3">
+                        <div className="flex-1 min-w-[220px] max-w-lg">
+                            <label htmlFor="outsource-target-pn-v41" className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">
+                                TARGET PN (mặc định mã đầu tiên)
+                            </label>
+                            <select id="outsource-target-pn-v41" value={selectedValid ? selectedTargetPn : ''}
+                                onChange={(e) => { setSelectedTargetPn(e.target.value); setManualNextProcess(''); }}
+                                disabled={isPrintModeActive || !candidatesReady}
+                                className="w-full bg-slate-950 text-white border border-slate-600 rounded-lg px-3 py-2 text-sm font-mono disabled:opacity-50">
+                                {!selectedValid && <option value="">{candidateInfo.status === 'loading' ? 'Đang tải Target PN...' : 'Chưa có danh sách PN đích'}</option>}
+                                {candidatesReady && candidateInfo.items.map(pn => <option value={pn} key={pn}>{pn}</option>)}
+                            </select>
+                        </div>
+                        <button type="button" onClick={() => { setCandidateRetry(n => n + 1); setRoutingRetry(n => n + 1); }}
+                            disabled={isPrintModeActive} className="text-xs font-bold border border-slate-600 rounded-lg px-3 py-2 text-slate-300 hover:bg-slate-700 disabled:opacity-40">
+                            TẢI LẠI
+                        </button>
+                    </div>
+                    <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
+                        <div><span className="text-xs text-slate-400 font-bold">CURRENT PN:</span> <b className="text-white">{currentPn || '-'}</b></div>
+                        <div><span className="text-xs text-slate-400 font-bold">CURRENT PROCESS:</span> <b className="text-white">Outsource</b></div>
+                        <div><span className="text-xs text-slate-400 font-bold">NEXT PROCESS:</span>{' '}
+                            <b className={routingReady ? 'text-emerald-300' : 'text-amber-300'}>
+                                {labelReady ? printableNextProcess : 'Đang xác định...'}
+                            </b>
+                        </div>
+                    </div>
+                    {manualFallback && (
+                        <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-3">
+                            <div className="text-xs text-amber-300 mb-2">
+                                Không lấy được routing: {!currentPn ? 'Thiếu New Part Number (Sau Outsource).' :
+                                    (candidatesFailed ? candidateInfo.error : routingInfo.error)}
+                            </div>
+                            <label htmlFor="outsource-manual-next-v41" className="text-xs text-white block mb-1">
+                                NEXT PROCESS thủ công (để trống sẽ in dấu -)
+                            </label>
+                            <input id="outsource-manual-next-v41" type="text" value={manualNextProcess}
+                                disabled={isPrintModeActive} onChange={(e) => setManualNextProcess(e.target.value)}
+                                placeholder="Bỏ trống để dùng dấu -"
+                                className="w-full max-w-xl bg-slate-950 border border-amber-500/50 rounded-lg px-3 py-2 text-sm text-white" />
+                        </div>
+                    )}
+                </div>
+            )}
+
             {/* ================================================== */}
             {/* THANH CÔNG CỤ (Ẩn đi khi đang chọn In) */}
             {/* ================================================== */}
@@ -323,7 +449,7 @@ const FrameOutSourceAllocator = () => {
                         <CheckCheck size={18}/> DUYỆT TẤT CẢ
                     </button>
                     <div className="w-px bg-slate-600 mx-1 hidden sm:block"></div>
-                    <button onClick={() => setShowPrintTypeSelector(true)} className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-orange-600 hover:bg-orange-500 text-white px-6 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-orange-900/40 transition-colors">
+                    <button onClick={() => setShowPrintTypeSelector(true)} disabled={!labelReady} className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-orange-600 hover:bg-orange-500 text-white px-6 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-orange-900/40 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
                         <Printer size={18}/> IN TEM MÃ VẠCH
                     </button>
                 </div>
@@ -444,7 +570,7 @@ const FrameOutSourceAllocator = () => {
                         </button>
                         <button 
                             onClick={executePrint} 
-                            disabled={selectedForPrint.length === 0} 
+                            disabled={selectedForPrint.length === 0 || !labelReady} 
                             className={`text-xs font-black px-6 py-2.5 rounded-full flex items-center gap-1.5 transition-all whitespace-nowrap ${selectedForPrint.length === 0 ? 'bg-slate-700 text-slate-500' : 'bg-orange-600 hover:bg-orange-500 text-white shadow-lg shadow-orange-600/30'}`}
                         >
                             <Printer size={16}/> XÁC NHẬN IN
