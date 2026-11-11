@@ -5,6 +5,7 @@ import { ScanLine, XCircle, AlertTriangle, PackagePlus, MonitorDot, CheckCircle,
 import { useTranslation } from 'react-i18next';
 import useProductionStore from '../../store/productionStore';
 import { workstationAPI } from '../../api/workstationApi';
+import useRawMaterialFlow from '../../hooks/useRawMaterialFlow';
 import BarcodeScanner from '../common/BarcodeScanner';
 import { MESSAGE_TYPE, WO_STATUS } from '../common/Constants';
 import { SearchableDefectSelector } from '../common/SearchableDefectSelector';
@@ -42,8 +43,13 @@ const FrameMachiningProc = () => {
     const [scanError, setScanError] = useState('');
     const [mainInputs, setMainInputs] = useState([]);
     const [rawMaterials, setRawMaterials] = useState([]);
-    const [qtyModal, setQtyModal] = useState({ isOpen: false, scannedCode: '', matchedRule: null });
-    const [inputQty, setInputQty] = useState('');
+    // MES2 Phase C: shared strict RAW parser, server validation and remainder modal.
+    const rawFlow = useRawMaterialFlow({
+        wo: woData.WO, rules: rawRules,
+        onRefresh: async () => { await loadMaterialHistory(); },
+        onError: (message) => setScanError(message),
+    });
+
     const [remainderModal, setRemainderModal] = useState({
         isOpen: false,
         batch: '',
@@ -112,15 +118,18 @@ const FrameMachiningProc = () => {
     }, [woData.WO]);
 
     useEffect(() => {
-        if (!qtyModal.isOpen && !remainderModal.isOpen && !isNgModalOpen && !matReqModal.isOpen && !doneModal.isOpen && !showMatScanner && !showDoneScanner && inputRef.current) {
+        if (!rawFlow.modalOpen && !remainderModal.isOpen && !isNgModalOpen && !matReqModal.isOpen && !doneModal.isOpen && !showMatScanner && !showDoneScanner && inputRef.current) {
             inputRef.current.focus();
         }
-    }, [qtyModal.isOpen, remainderModal.isOpen, isNgModalOpen, matReqModal.isOpen, doneModal.isOpen, showMatScanner, showDoneScanner, mainInputs, rawMaterials]);
+    }, [rawFlow.modalOpen, remainderModal.isOpen, isNgModalOpen, matReqModal.isOpen, doneModal.isOpen, showMatScanner, showDoneScanner, mainInputs, rawMaterials]);
 
     const handleScanMaterial = async (code) => {
         if (!code.trim()) return;
         const scannedCode = code.trim();
         setScanError('');
+
+        // RAW is matched by exact PN before substring-based Batch recognition.
+        if (await rawFlow.tryHandle(scannedCode)) { setMaterialInput(''); return; }
 
         // 1. TRƯỜNG HỢP: MAIN INPUT (BATCH) - Quét qua toàn bộ mảng mainInputRules
         const matchedMainRule = mainInputRules.find(rule => 
@@ -157,16 +166,6 @@ const FrameMachiningProc = () => {
                 const backendMessage = error.response?.data?.detail || error.response?.data?.message;
                 setScanError(backendMessage || "Lỗi kết nối Server khi ghi nhận Input Batch!");
             }
-            return;
-        }
-
-        // 2. TRƯỜNG HỢP: RAW MATERIAL (Giữ nguyên)
-        const matchedRawRule = rawRules?.find(rule => 
-            rule.fixedString && scannedCode.toUpperCase().includes(rule.fixedString.toUpperCase())
-        );
-        if (matchedRawRule) {
-            setQtyModal({ isOpen: true, scannedCode: scannedCode, matchedRule: matchedRawRule });
-            setMaterialInput('');
             return;
         }
 
@@ -231,25 +230,6 @@ const FrameMachiningProc = () => {
             }));
         }
     };
-
-    const handleSubmitRawQty = async () => {
-        const qty = parseFloat(inputQty);
-        if (isNaN(qty) || qty <= 0) return alert("Vui lòng nhập số lượng hợp lệ!");
-        try {
-            const result = await workstationAPI.logRawMaterial(woData.WO, qtyModal.scannedCode, qty, qtyModal.matchedRule.partNumber);
-            if (result.success) {
-                setRawMaterials([{ code: qtyModal.scannedCode, pn: qtyModal.matchedRule.partNumber, qty: qty, time: new Date().toLocaleTimeString() }, ...rawMaterials]);
-                setQtyModal({ isOpen: false, scannedCode: '', matchedRule: null });
-                setInputQty('');
-            } else {
-                alert(result.message || "Lỗi khi ghi nhận phụ liệu!");
-            }
-        } catch (error) {
-            const backendMessage = error.response?.data?.detail || error.response?.data?.message;
-            alert(backendMessage || "Lỗi kết nối Server khi ghi nhận phụ liệu!");
-        }
-    };
-
 
     const handleSubmitMatReq = async () => {
         const reqQty = parseFloat(matReqModal.qty);
@@ -462,6 +442,7 @@ const FrameMachiningProc = () => {
                 key: `${pn}-${index}`,
                 pn,
                 fixedString: rule.fixedString || '',
+                expectedUom: rule.expected_uom || 'PCS',
                 isScanned: matchedItems.length > 0,
                 scanCount: matchedItems.length,
                 totalQty
@@ -625,7 +606,7 @@ const FrameMachiningProc = () => {
                                             {item.isScanned ? 'Đã scan' : 'Chưa scan'}
                                         </p>
                                         <p className="text-xs text-slate-400 mt-1">
-                                            {item.scanCount} mã · {item.totalQty} PCS
+                                            {item.scanCount} mã · {item.totalQty} {item.expectedUom}
                                         </p>
                                     </div>
                                 </div>
@@ -645,7 +626,7 @@ const FrameMachiningProc = () => {
                                     <span className="text-emerald-300 break-all">{item.code}</span>
                                     <div className="flex gap-4 items-center">
                                         <span className="text-slate-500 text-xs">PN: {item.pn}</span>
-                                        <span className="text-emerald-400 font-bold text-xs bg-emerald-500/10 px-2 py-1 rounded border border-emerald-500/20">{item.qty} pcs</span>
+                                        <span className="text-emerald-400 font-bold text-xs bg-emerald-500/10 px-2 py-1 rounded border border-emerald-500/20">{item.qty} {item.uom || "-"}</span>
                                         <span className="text-slate-400 text-xs">{item.time}</span>
                                     </div>
                                 </div>
@@ -740,26 +721,8 @@ const FrameMachiningProc = () => {
                 </div>
             )}
 
-            {qtyModal.isOpen && (
-                <div className="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-slate-800 w-full max-w-md rounded-2xl border border-slate-600 shadow-2xl p-6 animate-fade-in-up">
-                        <div className="flex justify-between items-center mb-4 border-b border-slate-700 pb-3">
-                            <h2 className="text-xl font-bold text-emerald-400">Nhập số lượng sử dụng</h2>
-                            <button onClick={() => setQtyModal({...qtyModal, isOpen: false})} className="text-slate-400 hover:text-white"><X size={24}/></button>
-                        </div>
-                        <div className="mb-6 bg-slate-900 p-3 rounded border border-slate-700">
-                            <p className="text-slate-400 text-xs mb-1">Mã vừa quét (PN: {qtyModal.matchedRule?.partNumber}):</p>
-                            <p className="text-emerald-300 font-mono text-sm break-all">{qtyModal.scannedCode}</p>
-                        </div>
-                        <div className="mb-6">
-                            <label className="block text-slate-300 font-bold mb-2">Số lượng (QTY):</label>
-                            <input type="number" value={inputQty} onChange={(e) => setInputQty(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSubmitRawQty()} className="w-full bg-slate-900 border border-emerald-500/50 text-white px-4 py-3 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none text-xl font-mono text-center" />
-                        </div>
-                        <button onClick={handleSubmitRawQty} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-lg shadow-lg">XÁC NHẬN SỐ LƯỢNG</button>
-                    </div>
-                </div>
-            )}
-
+            {/* MES2 Phase C: shared RAW remainder modal; initial QTY is read from barcode. */}
+            {rawFlow.modal}
 
             {matReqModal.isOpen && (
                 <div className="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">

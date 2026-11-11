@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, ChevronRight, FileJson, ChevronDown, Package, Layers, Settings2, Save, X, Search, Wrench, CheckCircle2, Box, Cpu, Plus, Trash2, Play, Link as LinkIcon, Filter, AlertCircle, FolderOpen, Download, EyeOff, Eye, BellRing, Loader2 } from 'lucide-react';
-import useModelConfigStore from '../store/ModelConfigStore';
+import useModelConfigStore, { rawUomIssues } from '../store/ModelConfigStore';
 import ECNCard from '../components/dashboard/ECNCard';
 
 // ==========================================
@@ -148,8 +148,14 @@ const ConfigTableRow = ({ node, depth = 0 }) => {
                      </div>
                  </div>
               ) : (
-                  // CÁC RULE KHÁC CHỈ CÓ FIXED STRING BÌNH THƯỜNG
-                  <input type="text" placeholder="Format (VD: P/N:)" value={config.fixedString} onChange={(e) => updateFixedString(node.Component, e.target.value)} className="w-full bg-slate-900 border border-slate-600 text-emerald-300 text-sm px-3 py-1.5 rounded font-mono outline-none focus:border-emerald-500" />
+                  <div className="w-full flex flex-col gap-1">
+                    <input type="text" placeholder="Format (VD: P/N:)" value={config.fixedString} onChange={(e) => updateFixedString(node.Component, e.target.value)} className="w-full bg-slate-900 border border-slate-600 text-emerald-300 text-sm px-3 py-1.5 rounded font-mono outline-none focus:border-emerald-500" />
+                    {config.scanType === 'RAW_QTY' && (
+                      <span className={`text-xs font-bold ${node.Unit?.trim() ? 'text-amber-300' : 'text-red-400'}`}>
+                        UOM from BOM: {node.Unit?.trim().toUpperCase() || 'MISSING — cannot save'}
+                      </span>
+                    )}
+                  </div>
               )}
             </div>
           )}
@@ -314,7 +320,10 @@ const ReviewModal = ({ onClose, onSave }) => {
   const renderCard = (item) => (
     <div className="bg-slate-800/50 border border-slate-700 rounded p-3 flex justify-between items-center shadow-inner">
       <span className="text-slate-200 font-mono text-sm font-semibold">{item.partNumber}</span>
-      <span className="text-emerald-400 font-mono text-xs bg-emerald-900/20 px-2.5 py-1 rounded border border-emerald-500/20">{item.fixedString || '---'}</span>
+      <div className="flex flex-col items-end gap-1">
+        <span className="text-emerald-400 font-mono text-xs bg-emerald-900/20 px-2.5 py-1 rounded border border-emerald-500/20">{item.fixedString || '---'}</span>
+        {item.expected_uom && <span className="text-amber-300 text-xs font-bold">UOM: {item.expected_uom}</span>}
+      </div>
     </div>
   );
 
@@ -408,9 +417,20 @@ const BomConfig = ({ onClose }) => {
   const [showEcnReview, setShowEcnReview] = useState(false);
 
   const handleSearch = () => { if (searchPN.trim()) fetchConfigOrBom(searchPN.trim()); };
-  const handleProceed = () => { 
+  const handleProceed = () => {
+    const { MasterRouting: currentBom, configRules: currentRules, rawUomChanges } = useModelConfigStore.getState();
+    const issues = rawUomIssues(currentBom, currentRules);
+    if (issues.length) {
+      alert(`Cannot generate RAW scan rules:\n${issues.join('\n')}\n\nPlease check BOM Unit.`);
+      return;
+    }
+    if (rawUomChanges.length) {
+      const agreed = window.confirm(`BOM Unit has changed since the saved config:\n${[...new Set(rawUomChanges)].join('\n')}\n\nSave with the current BOM Units?`);
+      if (!agreed) return;
+    }
     // 1. Phân tích cây BOM thành cấu trúc Rules
-    parseMasterRoutingToRules(); 
+    try { parseMasterRoutingToRules(); }
+    catch (error) { alert(error.message); return; } 
     
     // 2. Lấy bộ Rules TƯƠI NHẤT vừa được parse từ Store (Tránh lỗi bất đồng bộ của React)
     const { scanRulesConfig } = useModelConfigStore.getState();
@@ -444,10 +464,14 @@ const BomConfig = ({ onClose }) => {
   };
   
   const handleFinalSave = async () => {
-    await saveConfig(searchPN);
-    alert("Cấu hình Model đã được lưu thành công vào Database!");
-    setShowReview(false);
-    if(onClose) onClose();
+    try {
+      await saveConfig(searchPN);
+      alert("Cấu hình Model đã được lưu thành công vào Database!");
+      setShowReview(false);
+      if(onClose) onClose();
+    } catch (error) {
+      alert(error?.response?.data?.detail || error?.message || 'Cannot save model config.');
+    }
   };
 
   useEffect(() => {

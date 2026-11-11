@@ -23,39 +23,57 @@ import {
 } from 'lucide-react';
 
 import { traceabilityApi } from '../../api/traceabilityAPI';
+import { reworkAPI } from '../../api/reworkAPI';
+import RWDetailsTables from '../rework/RWDetailsTables';
 
 
-const exportToCSV = (data, filename) => {
-    if (!Array.isArray(data) || data.length === 0) return;
-
-    const headers = Object.keys(data[0]);
-
-    const csvRows = [
-        headers.join(','),
-        ...data.map((row) => (
-            headers
-                .map((header) => {
-                    const value = row[header] ?? '';
-                    return `"${String(value).replace(/"/g, '""')}"`;
-                })
-                .join(',')
-        )),
-    ];
-
-    const csvString = csvRows.join('\n');
-    const blob = new Blob(
-        ['\ufeff' + csvString],
-        { type: 'text/csv;charset=utf-8;' },
-    );
-
-    const link = document.createElement('a');
-    const objectUrl = URL.createObjectURL(blob);
-
-    link.href = objectUrl;
-    link.download = `${filename}.csv`;
-    link.click();
-
-    URL.revokeObjectURL(objectUrl);
+// Named columns shared by the visible Details table and CSV export.
+const BATCH_DETAIL_COLUMNS = [
+  { header: 'Part Number', get: r => r.PartNO || 'N/A' },
+  { header: 'Mã Batch', get: r => r.Batch },
+  { header: 'WO khai sinh', get: r => r.BornWO ?? 'N/A' },
+  { header: 'Born QTY', get: r => r.BornQTY ?? 0 },
+  { header: 'Used QTY', get: r => r.QTY ?? 0 },
+  { header: 'Trạng thái', get: r => r.IsCurrent ? 'ĐANG GIỮ PHẦN DƯ' : 'ĐÃ CHỐT' },
+  { header: 'Thời gian', get: r => r.Time || 'N/A' },
+];
+const BATCH_TRACE_COLUMNS = [
+  { header: 'Batch', get: r => r.Batch },
+  { header: 'Part Number', get: r => r.PartNO },
+  { header: 'Born WO', get: r => r.BornWO },
+  { header: 'Born QTY', get: r => r.BornQTY },
+  { header: 'Born Time', get: r => r.BornTime },
+  { header: 'Print Status', get: r => r.PrintStatus },
+  { header: 'RW Frozen', get: r => r.IsFrozen ? 'YES' : 'NO' },
+  { header: 'QC Hold', get: r => r.IsQCHeld ? 'YES' : 'NO' },
+  { header: 'Consumption ID', get: r => r.ConsumptionID },
+  { header: 'Used by WO', get: r => r.ConsumerWO },
+  { header: 'Used QTY', get: r => r.UsedQTY },
+  { header: 'Consumption Status', get: r => r.IsCurrent === undefined ? '' : (r.IsCurrent ? 'ĐANG GIỮ PHẦN DƯ' : 'ĐÃ CHỐT') },
+  { header: 'Used Time', get: r => r.UsedTime },
+];
+const safeCSVCell = (raw) => {
+  const str = String(raw ?? '');
+  // Prevent spreadsheet formula injection (including leading whitespace).
+  const safe = /^[\s\uFEFF]*[=+@-]/u.test(str) ? `\'${str}` : str;
+  return `"${safe.replace(/"/g, '""')}"`;
+};
+const exportToCSV = (data, filename, columns = null) => {
+  if (!Array.isArray(data) || data.length === 0) return;
+  const definitions = columns || Array.from(
+    new Set(data.flatMap((row) => Object.keys(row || {}))),
+  ).map((key) => ({ header: key, get: row => row[key] }));
+  const rows = [
+    definitions.map(c => safeCSVCell(c.header)).join(','),
+    ...data.map(row => definitions.map(c => safeCSVCell(c.get(row))).join(',')),
+  ];
+  const blob = new Blob(['\ufeff', rows.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${filename}.csv`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
 };
 
 
@@ -201,6 +219,11 @@ const WOTreeNode = ({
                         </span>
                     </div>
 
+                    {node.HasRework && <button type="button" onClick={() => onViewDetails('rework', node.WO)}
+                        title="Xem danh sách Input / Output Batches Reworked"
+                        className="text-xs font-black px-2 py-1 rounded border border-purple-500/60 bg-purple-600/20 text-purple-200 hover:bg-purple-500/30">
+                        RW {node.ReworkType === 'BULK' ? '· BULK' : '· 1-1'}
+                    </button>}
                     {modelValue && (
                         <span className="text-xs text-slate-400 font-mono bg-slate-800 px-2 py-0.5 rounded truncate">
                             Model: {modelValue}
@@ -627,6 +650,34 @@ const TraceabilityView = () => {
     };
 
 
+    const executeBatchTrace = async (code) => {
+        setIsSearching(true); setTreeData(null); setSelectedWOs([]);
+        setDetailPanel(null); setErrorMsg(''); setTargetBoxId(code);
+        try {
+            const response = await traceabilityApi.traceBatch(code);
+            if (!response.success) throw new Error(response.message || 'Không tìm thấy Batch.');
+            const result = response.data;
+            const uniqueWOs = Array.from(new Set((result.DirectConsumers || [])
+                .map(c => c.WO).filter(x => x !== null && x !== undefined)));
+            if (result.BornWO !== null && result.BornWO !== undefined) {
+                setTreeData([{
+                    WO: result.BornWO,
+                    Model: result.ProducerModel || 'Batch producer',
+                    Type: 'Batch Producer',
+                    children: uniqueWOs.filter(wo => String(wo) !== String(result.BornWO)).map(wo => ({
+                        WO: wo,
+                        Model: (result.DirectConsumers || []).find(c => String(c.WO) === String(wo))?.ModelNO || 'Batch consumer',
+                        Type: 'Batch Consumer', children: [],
+                    })),
+                }]);
+            }
+            setDetailPanel({ type: 'batch_trace', loading: false, data: result,
+                title: `TRACE BATCH: ${result.Batch}` });
+        } catch (error) {
+            setErrorMsg(error.message || 'Lỗi truy xuất Batch.');
+        } finally { setIsSearching(false); }
+    };
+
     const handleSearch = async (event) => {
         if (event) event.preventDefault();
 
@@ -641,6 +692,10 @@ const TraceabilityView = () => {
 
         if (searchMode === 'WO') {
             executeWOTrace(query);
+            return;
+        }
+        if (searchMode === 'BATCH') {
+            executeBatchTrace(query);
             return;
         }
 
@@ -706,7 +761,10 @@ const TraceabilityView = () => {
             let apiCall;
             let title = '';
 
-            if (type === 'batches') {
+            if (type === 'rework') {
+                apiCall = reworkAPI.details(payload);
+                title = `REWORK DETAILS — WO ${payload}`;
+            } else if (type === 'batches') {
                 apiCall = traceabilityApi.getBatchesByWO(payload);
                 title = `Input Batches (WO: ${payload})`;
             } else if (type === 'materials') {
@@ -733,7 +791,7 @@ const TraceabilityView = () => {
             setDetailPanel({
                 type,
                 loading: false,
-                data: response.data || [],
+                data: type === 'rework' ? (response.data || null) : (response.data || []),
                 title,
             });
         } catch (error) {
@@ -872,6 +930,33 @@ const TraceabilityView = () => {
     const handleExportDetails = () => {
         if (!detailPanel?.data) return;
 
+        if (detailPanel.type === 'batch_trace') {
+            const b = detailPanel.data;
+            const rows = b.DirectConsumers?.length ? b.DirectConsumers.map(c => ({
+                ...b, ConsumerWO: c.WO, UsedQTY: c.UsedQTY,
+                UsedTime: c.UsedTime, IsCurrent: c.IsCurrent,
+                ConsumptionID: c.ConsumptionID,
+            })) : [{ ...b }];
+            exportToCSV(rows, `TraceBatch_${b.Batch}`, BATCH_TRACE_COLUMNS);
+            return;
+        }
+        if (detailPanel.type === 'rework') {
+            const rw = detailPanel.data;
+            if (!rw) return;
+            const rows = [
+                ...(rw.InputBatches || []).map(r => ({ RecordType: 'INPUT', Batch: r.Batch, PartNO: r.PartNO, QTY: r.InputQty, Frozen: r.IsFrozen, WO: rw.WO })),
+                ...(rw.OutputBatchesReworked || []).map(r => ({ RecordType: 'OUTPUT_REWORKED', Batch: r.Batch, PartNO: r.PartNO, QTY: r.QTY, Frozen: r.IsFrozen, WO: rw.WO })),
+            ];
+            exportToCSV(rows, `Rework_${rw.WO}_Input_Output`, [
+                { header: 'Record Type', get: r => r.RecordType },
+                { header: 'Batch', get: r => r.Batch },
+                { header: 'PN', get: r => r.PartNO },
+                { header: 'QTY', get: r => r.QTY },
+                { header: 'Lifecycle', get: r => r.Frozen ? 'FROZEN' : 'ACTIVE' },
+                { header: 'WO', get: r => r.WO },
+            ]);
+            return;
+        }
         if (detailPanel.type === 'reverse_graph') {
             const graphRows = (
                 detailPanel.data.graph || []
@@ -891,6 +976,7 @@ const TraceabilityView = () => {
             exportToCSV(
                 detailPanel.data,
                 `Export_${detailPanel.type}_Data`,
+                detailPanel.type === 'batches' ? BATCH_DETAIL_COLUMNS : null,
             );
         }
     };
@@ -901,6 +987,10 @@ const TraceabilityView = () => {
             return false;
         }
 
+        if (detailPanel.type === 'batch_trace') return Boolean(detailPanel.data?.Batch);
+        if (detailPanel.type === 'rework') {
+            return Boolean((detailPanel.data?.InputBatches || []).length || (detailPanel.data?.OutputBatchesReworked || []).length);
+        }
         if (detailPanel.type === 'reverse_graph') {
             return Boolean(
                 detailPanel.data
@@ -980,6 +1070,14 @@ const TraceabilityView = () => {
 
                             <button
                                 type="button"
+                                onClick={() => setSearchMode('BATCH')}
+                                className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+                                    searchMode === 'BATCH' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
+                                }`}
+                            >Trace by Batch</button>
+
+                            <button
+                                type="button"
                                 onClick={() => setSearchMode('WO')}
                                 className={`
                                     px-4 py-2 rounded-lg text-sm
@@ -1013,7 +1111,7 @@ const TraceabilityView = () => {
                                                 t('traceability.EnterProductID')
                                                 || 'Nhập mã Sản Phẩm...'
                                             )
-                                            : 'Enter JOB NO'
+                                            : searchMode === 'BATCH' ? 'Scan / Enter Batch ID' : 'Enter JOB NO'
                                 }
                                 className="
                                     w-full bg-slate-900
@@ -1309,6 +1407,29 @@ const TraceabilityView = () => {
                                         border-slate-700 rounded-xl
                                         overflow-hidden
                                     ">
+                                        {detailPanel.type === 'rework' && <div className="p-3"><RWDetailsTables data={detailPanel.data} /></div>}
+                                        {detailPanel.type === 'batch_trace' && detailPanel.data && <div className="p-4 space-y-4 text-sm">
+                                            <p className="text-amber-300 text-xs">Chỉ hiển thị các cạnh tiêu thụ được xác nhận của Batch này; không tự suy diễn những Batch khác trong cùng WO.</p>
+                                            <div className="grid grid-cols-2 gap-3">
+                                                {[
+                                                    ['Batch', detailPanel.data.Batch], ['Part Number', detailPanel.data.PartNO],
+                                                    ['Born WO', detailPanel.data.BornWO], ['Born QTY', detailPanel.data.BornQTY],
+                                                    ['Born Time', detailPanel.data.BornTime], ['Print Status', detailPanel.data.PrintStatus],
+                                                    ['RW Frozen', detailPanel.data.IsFrozen ? 'YES' : 'NO'],
+                                                    ['QC Hold', detailPanel.data.IsQCHeld ? 'YES' : 'NO'],
+                                                ].map(([label, value]) => <div key={label} className="p-3 bg-slate-900 rounded-lg">
+                                                    <span className="text-slate-400 block text-xs">{label}</span><b className="break-all">{value ?? '-'}</b>
+                                                </div>)}
+                                            </div>
+                                            <h4 className="font-bold text-lg">Direct Batch Consumption ({detailPanel.data.DirectConsumers?.length || 0})</h4>
+                                            <div className="overflow-auto"><table className="w-full text-xs text-left whitespace-nowrap">
+                                                <thead><tr className="text-slate-400 border-b border-slate-700"><th className="p-2">Used by WO</th><th>Used QTY</th><th>Status</th><th>Used Time (UTC)</th></tr></thead>
+                                                <tbody>{(detailPanel.data.DirectConsumers || []).map((row, i) => <tr key={row.ConsumptionID || i} className="border-b border-slate-700/50">
+                                                    <td className="p-2">{row.WO}</td><td>{row.UsedQTY}</td><td>{row.IsCurrent ? 'ĐANG GIỮ PHẦN DƯ' : 'ĐÃ CHỐT'}</td><td>{row.UsedTime || '-'}</td>
+                                                </tr>)}</tbody>
+                                            </table></div>
+                                        </div>}
+
                                         {[
                                             'batches',
                                             'materials',

@@ -192,7 +192,7 @@ const FrameOutSourceAllocator = () => {
     };
 
     const handleBulkVerify = async () => {
-        const unverifiedCards = cards.filter(c => c.state === 'Wait-Verify');
+        const unverifiedCards = cards.filter(c => !c.isFrozen && !c.isQcHeld && c.state === 'Wait-Verify');
         if (unverifiedCards.length === 0) return alert("Không có thẻ nào đang chờ duyệt!");
 
         const payload = {
@@ -214,7 +214,7 @@ const FrameOutSourceAllocator = () => {
         setShowPrintTypeSelector(false);
         setPrintMode(mode);
         if (mode === 'new') {
-            const waitPrintCards = cards.filter(c => c.state === 'Wait-Printing').map(c => c.barcode);
+            const waitPrintCards = cards.filter(c => !c.isFrozen && !c.isQcHeld && c.state === 'Wait-Printing').map(c => c.barcode);
             if (waitPrintCards.length === 0) {
                 alert("Không có thẻ nào đang chờ in!");
                 setPrintMode('none');
@@ -222,7 +222,7 @@ const FrameOutSourceAllocator = () => {
             }
             setSelectedForPrint(waitPrintCards);
         } else {
-            const exportedCards = cards.filter(c => c.state === 'Exported');
+            const exportedCards = cards.filter(c => !c.isFrozen && !c.isQcHeld && c.state === 'Exported');
             if (exportedCards.length === 0) {
                 alert("Chưa có thẻ nào được xuất để in lại!");
                 setPrintMode('none');
@@ -238,7 +238,7 @@ const FrameOutSourceAllocator = () => {
     };
 
     const selectAllEligible = () => {
-        const targetCards = cards.filter(c => c.state === (printMode === 'new' ? 'Wait-Printing' : 'Exported')).map(c => c.barcode);
+        const targetCards = cards.filter(c => !c.isFrozen && !c.isQcHeld && c.state === (printMode === 'new' ? 'Wait-Printing' : 'Exported')).map(c => c.barcode);
         setSelectedForPrint(targetCards);
     };
 
@@ -246,6 +246,15 @@ const FrameOutSourceAllocator = () => {
         if (selectedForPrint.length === 0) return alert("Vui lòng chọn ít nhất 1 thẻ để in!");
         if (!labelReady) return alert('Đang xác định Next Process. Vui lòng thử lại.');
         try {
+            const current = await workstationAPI.getAllocationStatus(wo);
+            if (!current.success || !Array.isArray(current.data) || selectedForPrint.some(code =>
+                !current.data.some(c => c.barcode === code && !c.isFrozen && !c.isQcHeld))) {
+                throw new Error('Batch đã bị RW FROZEN / QC HOLD hoặc trạng thái đã thay đổi.');
+            }
+            if (printMode === 'new') {
+                const res = await workstationAPI.printBatches({ WO: wo, Barcodes: selectedForPrint });
+                if (!res.success) throw new Error(res.message || 'Backend từ chối in tem.');
+            }
             const fileContent = selectedForPrint.map(barcode => {
                 const targetCard = cards.find(c => c.barcode === barcode);
                 return formatAllocatorLabelRow([
@@ -261,15 +270,8 @@ const FrameOutSourceAllocator = () => {
             a.click();
             URL.revokeObjectURL(url);
 
-            if (printMode === 'new') {
-                const res = await workstationAPI.printBatches({ WO: wo, Barcodes: selectedForPrint });
-                if (res.success) {
-                    alert(`Đã xuất ${selectedForPrint.length} mã ra file txt và cập nhật hệ thống!`);
-                    loadStatus();
-                } else alert("Lỗi từ máy chủ: " + res.message);
-            } else {
-                alert(`Đã xuất lại file txt cho ${selectedForPrint.length} mã!`);
-            }
+            alert(`Đã xuất file tem cho ${selectedForPrint.length} Batch.`);
+            loadStatus();
         } catch (error) {
             alert("Lỗi quá trình in: " + error.message);
         } finally {
@@ -468,7 +470,7 @@ const FrameOutSourceAllocator = () => {
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4 pb-20">
                         {displayCards.map((card) => {
                             const isSelected = selectedForPrint.includes(card.barcode);
-                            const isEligible = isPrintModeActive ? (printMode === 'new' ? card.state === 'Wait-Printing' : card.state === 'Exported') : true;
+                            const isEligible = !card.isFrozen && !card.isQcHeld && (isPrintModeActive ? (printMode === 'new' ? card.state === 'Wait-Printing' : card.state === 'Exported') : true);
 
                             return (
                                 <div 
@@ -499,7 +501,7 @@ const FrameOutSourceAllocator = () => {
                                                 <Package className="text-yellow-500" size={16} />
                                             </div>
                                             <p className={`font-mono font-bold text-xs truncate tracking-wider ${isSelected ? 'text-white' : 'text-slate-200'}`} title={card.barcode}>
-                                                {card.barcode}
+                                                {card.barcode}{(card.isFrozen || card.isQcHeld) && <span className="ml-2 text-rose-400 font-bold">{card.isFrozen ? 'RW FROZEN' : 'QC HOLD'}</span>}
                                             </p>
                                         </div>
                                         {!isPrintModeActive && (

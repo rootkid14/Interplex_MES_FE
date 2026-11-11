@@ -3,6 +3,7 @@ import { ActionButton } from "../common/ActionButton";
 import { ScanLine, XCircle, CheckCircle, Package, Box, Printer, FilePlus, CheckSquare, Square, X, CheckCheck, Cpu, MousePointerClick, RefreshCcw, Trash2, Settings2, Edit3, Download } from "lucide-react";
 import useProductionStore from '../../store/productionStore';
 import { workstationAPI } from '../../api/workstationApi';
+import { reworkAPI, rwApiError } from '../../api/reworkAPI';
 import { normalizeAllocatorPn, allocatorRoutingError, extractAllocatorProcess, formatAllocatorLabelRow } from '../../utils/allocatorRoutingV4';
 
 // IPTH_ALLOCATOR_PRINTER_DOWNLOAD_V3: Keep filename stable when publishing new EXE builds.
@@ -19,6 +20,9 @@ const FrameBatchAllocator = () => {
     const [cards, setCards] = useState([]); 
     const [config, setConfig] = useState({ pn: '', maxQty: '', customQty: '' });
     const [loading, setLoading] = useState(false);
+    const [source, setSource] = useState('NORMAL');
+    const [balance, setBalance] = useState(null);
+    const [statusError, setStatusError] = useState('');
     
     // STATE: CHẾ ĐỘ TẠO (Auto: Chia lô | Manual: Tạo lẻ)
     const [creationMode, setCreationMode] = useState('auto'); 
@@ -45,20 +49,34 @@ const FrameBatchAllocator = () => {
     const loadStatus = async () => {
         if (!wo) return;
         setLoading(true);
-        const res = await workstationAPI.getAllocationStatus(wo);
-        if (res.success) {
-            setCards(res.data);
-            if (res.data.length > 0) {
-                const firstCard = res.data[0];
+        setStatusError('');
+        try {
+            // Both responses are mandatory: never derive allocations from raw card sums.
+            const [cardResponse, balanceResponse] = await Promise.all([
+                workstationAPI.getAllocationStatus(wo), reworkAPI.allocationBalance(wo)
+            ]);
+            if (!cardResponse?.success || !Array.isArray(cardResponse.data)) {
+                throw new Error(cardResponse?.message || 'Không tải được danh sách tem.');
+            }
+            if (!balanceResponse?.success || !balanceResponse.data) {
+                throw new Error(balanceResponse?.message || 'Không tải được Allocation balance.');
+            }
+            setCards(cardResponse.data);
+            setBalance(balanceResponse.data);
+            if (cardResponse.data.length > 0) {
+                const firstCard = cardResponse.data[0];
                 setConfig(prev => ({ ...prev, pn: firstCard.pn, maxQty: firstCard.qty || prev.maxQty }));
             } else {
                 setConfig(prev => ({ ...prev, pn: woData?.ModelNO || '' }));
             }
-        }
-        setLoading(false);
+        } catch (error) {
+            setCards([]);
+            setBalance(null);
+            setStatusError(rwApiError(error, 'Không thể xác nhận Allocation balance.'));
+        } finally { setLoading(false); }
     };
 
-    useEffect(() => { loadStatus(); }, [wo]);
+    useEffect(() => { setSource('NORMAL'); setBalance(null); loadStatus(); }, [wo]);
 
     const allocatedPn = normalizeAllocatorPn((cards.length ? cards[0]?.pn : config.pn) || woData?.ModelNO);
     const candidateKey = wo && allocatedPn ? `${String(wo).trim()}::${allocatedPn}::r${candidateRetry}` : '';
@@ -138,24 +156,29 @@ const FrameBatchAllocator = () => {
 
     // ==========================================
     // TÍNH TOÁN TIẾN ĐỘ
-    const totalProducedOK = liveWOData?.QTY_OK ?? woData?.QTY_OK ?? 0;
-    const totalAllocated = cards.reduce((sum, c) => sum + (c.qty || 0), 0);
-    const remainingToAllocate = totalProducedOK - totalAllocated;
-    
-    const isConfigLocked = cards.length > 0; 
-    const maxQtyNum = parseInt(config.maxQty) || 0;
-    const customQtyNum = parseInt(config.customQty) || 0;
+    const totalProducedOK = Number(balance?.ProducedOK ?? 0);
+    const totalAllocated = Number(balance?.Allocated ?? 0);
+    const remainingNormal = Number(balance?.WaitAllocate ?? 0);
+    const reworked = Number(balance?.Reworked ?? 0);
+    const reworkedAllocated = Number(balance?.ReworkedAllocated ?? 0);
+    const remainingReworked = Number(balance?.ReworkedWaitAllocate ?? 0);
+    const remainingToAllocate = source === 'REWORK' ? remainingReworked : remainingNormal;
 
-    // Logic vô hiệu hóa nút Generate
-    const canGenerate = remainingToAllocate > 0 && (creationMode === 'auto' ? maxQtyNum > 0 : (customQtyNum > 0 && customQtyNum <= remainingToAllocate));
+    const isConfigLocked = cards.length > 0;
+    const maxQtyNum = parseInt(config.maxQty, 10) || 0;
+    const customQtyNum = parseInt(config.customQty, 10) || 0;
+    const canGenerate = Boolean(balance) && !loading && !statusError &&
+        (source !== 'REWORK' || balance?.HasRework) && remainingToAllocate > 0 &&
+        (creationMode === 'auto' ? maxQtyNum > 0 : (customQtyNum > 0 && customQtyNum <= remainingToAllocate));
 
     // ==========================================
     // CÁC HÀM XỬ LÝ DỮ LIỆU
     // ==========================================
     const handleGenerate = async () => {
+        if (!canGenerate) return alert('Không có nguồn cấp phát hợp lệ hoặc chưa tải được balance.');
         if (!config.pn) return alert("Vui lòng nhập Part Number!");
         
-        let payload = { WO: wo, PN: config.pn };
+        let payload = { WO: wo, PN: config.pn, Source: source };
 
         if (creationMode === 'auto') {
             payload.MaxQTY = maxQtyNum;
@@ -198,7 +221,7 @@ const FrameBatchAllocator = () => {
     };
 
     const handleBulkVerify = async () => {
-        const unverifiedCards = cards.filter(c => c.state === 'Wait-Verify');
+        const unverifiedCards = cards.filter(c => !(c.isFrozen || c.isQcHeld) && Boolean(c.isReworkedOutput) === (source === 'REWORK') && c.state === 'Wait-Verify');
         if (unverifiedCards.length === 0) return alert("Không có thẻ nào đang chờ duyệt!");
 
         const payload = {
@@ -216,7 +239,7 @@ const FrameBatchAllocator = () => {
         setShowPrintTypeSelector(false);
         setPrintMode(mode);
         if (mode === 'new') {
-            const waitPrintCards = cards.filter(c => c.state === 'Wait-Printing').map(c => c.barcode);
+            const waitPrintCards = cards.filter(c => !(c.isFrozen || c.isQcHeld) && Boolean(c.isReworkedOutput) === (source === 'REWORK') && c.state === 'Wait-Printing').map(c => c.barcode);
             if (waitPrintCards.length === 0) {
                 alert("Không có thẻ nào đang chờ in!");
                 setPrintMode('none');
@@ -224,7 +247,7 @@ const FrameBatchAllocator = () => {
             }
             setSelectedForPrint(waitPrintCards);
         } else {
-            const exportedCards = cards.filter(c => c.state === 'Exported');
+            const exportedCards = cards.filter(c => !(c.isFrozen || c.isQcHeld) && Boolean(c.isReworkedOutput) === (source === 'REWORK') && c.state === 'Exported');
             if (exportedCards.length === 0) {
                 alert("Chưa có thẻ nào được xuất để in lại!");
                 setPrintMode('none');
@@ -240,7 +263,7 @@ const FrameBatchAllocator = () => {
     };
 
     const selectAllEligible = () => {
-        const targetCards = cards.filter(c => c.state === (printMode === 'new' ? 'Wait-Printing' : 'Exported')).map(c => c.barcode);
+        const targetCards = cards.filter(c => !(c.isFrozen || c.isQcHeld) && Boolean(c.isReworkedOutput) === (source === 'REWORK') && c.state === (printMode === 'new' ? 'Wait-Printing' : 'Exported')).map(c => c.barcode);
         setSelectedForPrint(targetCards);
     };
 
@@ -273,7 +296,16 @@ const FrameBatchAllocator = () => {
         if (selectedForPrint.length === 0) return alert("Vui lòng chọn ít nhất 1 thẻ để in!");
         // V4: An explicit manual fallback (including '-') is valid when routing fails.
         if (!labelReady) return alert('Đang xác định routing. Vui lòng thử lại sau.');
+        if (selectedForPrint.some(code => !cards.some(c => c.barcode === code && !(c.isFrozen || c.isQcHeld) && Boolean(c.isReworkedOutput) === (source === 'REWORK')))) {
+            return alert('Có Batch đã bị FROZEN hoặc không thuộc nguồn cấp phát đang chọn.');
+        }
         try {
+            const current = await workstationAPI.getAllocationStatus(wo);
+            if (!current.success || !Array.isArray(current.data) || selectedForPrint.some(code =>
+                !current.data.some(c => c.barcode === code && !c.isFrozen && !c.isQcHeld &&
+                    Boolean(c.isReworkedOutput) === (source === 'REWORK')))) {
+                throw new Error('Batch đang FROZEN/QC HOLD hoặc trạng thái máy chủ đã thay đổi. Tải lại danh sách trước khi in.');
+            }
             // V4 label contract: BARCODE,WO,QTY,CURRENT_PN,CURRENT_PROCESS,NEXT_PROCESS.
             const fileContent = selectedForPrint.map(barcode => {
                 const targetCard = cards.find(c => c.barcode === barcode);
@@ -283,6 +315,11 @@ const FrameBatchAllocator = () => {
                 ]);
             }).join('\n');
 
+            // Check server validity BEFORE creating a downloadable label file.
+            if (printMode === 'new') {
+                const res = await workstationAPI.printBatches({ WO: wo, Barcodes: selectedForPrint });
+                if (!res.success) throw new Error(res.message || 'Backend từ chối in tem.');
+            }
             const blob = new Blob([fileContent], { type: 'text/plain' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -291,12 +328,7 @@ const FrameBatchAllocator = () => {
             a.click();
             URL.revokeObjectURL(url);
 
-            if (printMode === 'new') {
-                const res = await workstationAPI.printBatches({ WO: wo, Barcodes: selectedForPrint });
-                if (res.success) {
-                    loadStatus();
-                } else alert("Lỗi từ máy chủ: " + res.message);
-            }
+            loadStatus();
         } catch (error) {
             alert("Lỗi quá trình in: " + error.message);
         } finally {
@@ -306,7 +338,7 @@ const FrameBatchAllocator = () => {
 
     if (!currentAllocation) return null;
     const isPrintModeActive = printMode !== 'none';
-    const displayCards = [...cards].reverse(); 
+    const displayCards = [...cards].filter(c => Boolean(c.isReworkedOutput) === (source === 'REWORK')).reverse(); 
 
     return (
         <div className="flex flex-col h-full bg-slate-900 border-l border-slate-700 animate-fade-in relative z-10">
@@ -332,7 +364,7 @@ const FrameBatchAllocator = () => {
 
                 {/* BẢNG ĐIỀU KHIỂN */}
                 <div className="bg-slate-900/60 p-4 rounded-2xl border border-slate-700 shadow-inner">
-                    <div className="grid grid-cols-3 gap-3 mb-5 text-center">
+                    <div className={`grid grid-cols-2 ${balance?.HasRework ? 'lg:grid-cols-4' : 'lg:grid-cols-3'} gap-3 mb-5 text-center`}>
                         <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-600/50">
                             <span className="text-xs text-slate-400 font-bold uppercase block mb-1">Produced (OK)</span>
                             <span className="text-blue-400 font-black text-2xl">{totalProducedOK}</span>
@@ -343,9 +375,21 @@ const FrameBatchAllocator = () => {
                         </div>
                         <div className="bg-slate-800/80 p-3 rounded-xl border border-orange-500/20 relative">
                             <span className="text-xs text-slate-400 font-bold uppercase block mb-1">Wait Allocate</span>
-                            <span className={`font-black text-2xl ${remainingToAllocate < 0 ? 'text-red-500' : 'text-orange-400'}`}>{remainingToAllocate}</span>
+                            <span className={`font-black text-2xl ${remainingNormal < 0 ? 'text-red-500' : 'text-orange-400'}`}>{remainingNormal}</span>
                         </div>
+                        {balance?.HasRework && <div className="bg-purple-500/10 p-3 rounded-xl border border-purple-500/30">
+                            <span className="text-xs text-purple-300 font-bold uppercase block mb-1">Reworked</span>
+                            <span className="text-purple-200 font-black text-2xl">{reworked}</span>
+                            <p className="text-[10px] text-slate-400">Allocated RW: {reworkedAllocated} · Chờ tem: {remainingReworked}</p>
+                        </div>}
                     </div>
+                    {statusError && <div role="alert" className="text-red-300 bg-red-900/20 border border-red-500/40 p-3 rounded-lg mb-3">{statusError} — Vô hiệu hóa cấp phát để tránh phát tem trùng.</div>}
+                    {balance?.HasRework && <div className="flex flex-wrap gap-2 mb-4 items-center">
+                        <span className="text-xs font-bold text-slate-400">NGUỒN CẤP TEM:</span>
+                        <button disabled={isPrintModeActive} onClick={() => setSource('NORMAL')} className={`px-4 py-2 rounded-lg text-xs font-black border ${source === 'NORMAL' ? 'bg-blue-600 border-blue-400 text-white' : 'border-slate-600 text-slate-300'}`}>NORMAL PRODUCTION</button>
+                        <button disabled={isPrintModeActive} onClick={() => setSource('REWORK')} className={`px-4 py-2 rounded-lg text-xs font-black border ${source === 'REWORK' ? 'bg-purple-600 border-purple-400 text-white' : 'border-slate-600 text-slate-300'}`}>REWORK ({remainingReworked} chờ tem)</button>
+                    </div>}
+                    <p className="text-xs text-slate-400 mb-4">Có thể cấp phát: <b className="text-white">{remainingToAllocate}</b> PCS ({source}). Tem FROZEN vẫn nằm trong lịch sử nhưng không thể sử dụng.</p>
 
                     {/* VÙNG CHỌN CHẾ ĐỘ & TẠO TEM */}
                     <div className="flex flex-col gap-3">
@@ -492,7 +536,7 @@ const FrameBatchAllocator = () => {
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4 pb-20">
                         {displayCards.map((card) => {
                             const isSelected = selectedForPrint.includes(card.barcode);
-                            const isEligible = isPrintModeActive ? (printMode === 'new' ? card.state === 'Wait-Printing' : card.state === 'Exported') : true;
+                            const isEligible = !(card.isFrozen || card.isQcHeld) && (isPrintModeActive ? (printMode === 'new' ? card.state === 'Wait-Printing' : card.state === 'Exported') : true);
 
                             return (
                                 <div 
@@ -502,7 +546,7 @@ const FrameBatchAllocator = () => {
                                             setSelectedForPrint(prev => prev.includes(card.barcode) ? prev.filter(b => b !== card.barcode) : [...prev, card.barcode]);
                                         }
                                     }}
-                                    className={`relative rounded-xl p-3.5 border transition-all duration-200 ${
+                                    className={`relative rounded-xl p-3.5 border transition-all duration-200 ${(card.isFrozen || card.isQcHeld) ? 'opacity-50 bg-slate-950 border-rose-900/60' : ''} ${
                                         isPrintModeActive 
                                             ? (isEligible 
                                                 ? (isSelected ? 'bg-slate-800 border-slate-400 shadow-[0_0_15px_rgba(255,255,255,0.1)] cursor-pointer' : 'bg-slate-800/40 border-slate-700 hover:border-slate-500 cursor-pointer')
@@ -521,7 +565,7 @@ const FrameBatchAllocator = () => {
                                             <div className="bg-slate-700/50 p-1.5 rounded-lg shrink-0">
                                                 <Package className={card.state === 'Exported' ? 'text-slate-400' : 'text-blue-400'} size={16} />
                                             </div>
-                                            <p className={`font-mono font-bold text-xs truncate tracking-wider ${isSelected ? 'text-white' : 'text-slate-200'}`} title={card.barcode}>
+                                            <p className={`font-mono font-bold text-xs truncate tracking-wider ${(card.isFrozen || card.isQcHeld) ? 'line-through text-slate-500' : (isSelected ? 'text-white' : 'text-slate-200')}`} title={card.barcode}>
                                                 {card.barcode}
                                             </p>
                                         </div>
@@ -531,7 +575,7 @@ const FrameBatchAllocator = () => {
                                                 card.state === 'Wait-Printing' ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30' :
                                                 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
                                             }`}>
-                                                {card.state === 'Exported' ? 'Đã Xuất' : card.state === 'Wait-Printing' ? 'Chờ In' : 'Chờ Duyệt'}
+                                                {(card.isFrozen || card.isQcHeld) ? (card.isFrozen ? 'RW FROZEN — NGƯNG SỬ DỤNG' : 'QC HOLD — TẠM DỪNG') : card.state === 'Exported' ? 'Đã Xuất' : card.state === 'Wait-Printing' ? 'Chờ In' : 'Chờ Duyệt'}
                                             </span>
                                         )}
                                     </div>
@@ -541,14 +585,14 @@ const FrameBatchAllocator = () => {
                                         
                                         <div className="flex gap-1.5">
                                             {/* NÚT DUYỆT */}
-                                            {!isPrintModeActive && card.state === 'Wait-Verify' && (
+                                            {!isPrintModeActive && !(card.isFrozen || card.isQcHeld) && card.state === 'Wait-Verify' && (
                                                 <button onClick={(e) => { e.stopPropagation(); handleVerify(card.barcode, card.qty); }} className="text-[11px] bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1 rounded font-bold flex items-center gap-1 transition-colors shadow">
                                                     <CheckCircle size={14}/> DUYỆT
                                                 </button>
                                             )}
                                             
                                             {/* NÚT THU HỒI (RECALL) - Hiển thị cho mọi trạng thái nếu không trong mode in */}
-                                            {!isPrintModeActive && (
+                                            {!isPrintModeActive && !(card.isFrozen || card.isQcHeld) && !card.isReworkedOutput && (
                                                 <button 
                                                     onClick={(e) => { e.stopPropagation(); handleDeleteCard(card.barcode); }} 
                                                     className="text-[11px] bg-slate-800 hover:bg-red-600 border border-slate-700 hover:border-red-500 text-slate-400 hover:text-white px-2 py-1 rounded font-bold flex items-center gap-1 transition-all shadow group"

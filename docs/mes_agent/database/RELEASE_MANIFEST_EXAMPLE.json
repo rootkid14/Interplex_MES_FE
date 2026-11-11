@@ -1,0 +1,7 @@
+{
+  "release_id": "MES2_RAW_R1_EXAMPLE_NOT_READY",
+  "supported_db_schema_min": "V0001",
+  "supported_db_schema_max": "V0002",
+  "required_migrations": ["V0000", "V0001"],
+  "notes": "EXAMPLE ONLY. Real code updater must independently verify its own FE/BE source hashes and APIs before apply; this manifest alone is insufficient."
+}

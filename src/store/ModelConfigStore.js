@@ -3,6 +3,53 @@ import { bomAPI } from "../api/bomAPI";
 import { modelConfigAPI } from "../api/modelconfigApi";
 import useAuthStore from "./AuthStore";
 
+// MES2 UOM: BOM already carries Unit in /bom/lazy; keep the server as authority on save.
+const normalizedUom = (unit) => String(unit ?? '').trim().toUpperCase();
+
+// Duplicate Components can appear at different BOM levels. Never silently choose one Unit.
+export const rawUomIssues = (nodes, configRules) => {
+  const found = new Map();
+  const problems = [];
+  const walk = (items) => (items || []).forEach(node => {
+    const part = String(node.Component || '').trim();
+    if (configRules[part]?.scanType === 'RAW_QTY') {
+      const unit = normalizedUom(node.Unit);
+      if (!unit) problems.push(`${part}: BOM Unit is empty`);
+      else if (found.has(part) && found.get(part) !== unit) {
+        problems.push(`${part}: conflicting BOM Units (${found.get(part)} / ${unit})`);
+      } else found.set(part, unit);
+    }
+    walk(node.children);
+  });
+  walk(nodes);
+  Object.entries(configRules).forEach(([pn, rule]) => {
+    if (rule.scanType === 'RAW_QTY' && !found.has(pn) && !problems.some(p => p.startsWith(`${pn}:`))) {
+      problems.push(`${pn}: missing BOM node for active RAW_QTY rule`);
+    }
+  });
+  return [...new Set(problems)];
+};
+
+const hydrateRawUoms = (nodes, configRules) => {
+  const updated = { ...configRules };
+  const changes = [];
+  const walk = (items) => (items || []).forEach(node => {
+    const pn = String(node.Component || '').trim();
+    const rule = updated[pn];
+    if (rule?.scanType === 'RAW_QTY') {
+      const unit = normalizedUom(node.Unit);
+      if (unit && rule.expected_uom && normalizedUom(rule.expected_uom) !== unit) {
+        changes.push(`${pn}: ${rule.expected_uom} → ${unit}`);
+      }
+      // Source of truth is the current BOM node, not a previously saved string.
+      updated[pn] = { ...rule, expected_uom: unit };
+    }
+    walk(node.children);
+  });
+  walk(nodes);
+  return { updated, changes };
+};
+
 const useModelConfigStore = create((set, get) => ({
   // =====================================
   // 1. DATA CONTAINERS
@@ -29,6 +76,7 @@ const useModelConfigStore = create((set, get) => ({
   savedCompactRules: null, 
 
   globalEcnAlert: { hasAlert: false, message: "" },
+  rawUomChanges: [],
 
   sandboxRules: [
     { id: Date.now(), action: 'SKIP', conditions: [{ id: Date.now(), tools_target: 'PREFIX', tools_type: 'EQUAL', value: '' }] }
@@ -85,12 +133,14 @@ const useModelConfigStore = create((set, get) => ({
           });
         };
         applySavedRules(rawBom);
+        const hydrated = hydrateRawUoms(rawBom, initialRules);
 
         set({
           configType: rData.configType || 'PACKING',
           outSourcePN: rData.outSourcePN || dbRes.jsonData?.outSourcePN || '', 
           MasterRouting: rawBom, 
-          configRules: initialRules,
+          configRules: hydrated.updated,
+          rawUomChanges: hydrated.changes,
           scanRulesConfig: dbRes.jsonData || {},
           savedCompactRules: savedRules,
           isLoading: false,
@@ -138,7 +188,8 @@ const useModelConfigStore = create((set, get) => ({
         };
         
         initRules(rawBom);
-        set({ BomJSON: rawBom, MasterRouting: rawBom, configRules: initialRules, savedCompactRules: null, isLoading: false, globalEcnAlert: {hasAlert: false, message: ""} });
+        const hydrated = hydrateRawUoms(rawBom, initialRules);
+        set({ BomJSON: rawBom, MasterRouting: rawBom, configRules: hydrated.updated, rawUomChanges: [], savedCompactRules: null, isLoading: false, globalEcnAlert: {hasAlert: false, message: ""} });
       }
     } catch (e) {
       console.error("Error loading data:", e);
@@ -190,7 +241,9 @@ const useModelConfigStore = create((set, get) => ({
 
         const newRouting = [...MasterRouting];
         insertChildren(newRouting);
-        set({ MasterRouting: newRouting, configRules: newRules });
+        const hydrated = hydrateRawUoms(newRouting, newRules);
+        set({ MasterRouting: newRouting, configRules: hydrated.updated,
+          rawUomChanges: [...get().rawUomChanges, ...hydrated.changes] });
       }
     } catch (e) {
       console.error("Lỗi lazy load", e);
@@ -243,7 +296,9 @@ const useModelConfigStore = create((set, get) => ({
 
         const newRouting = [...MasterRouting];
         insertChildren(newRouting);
-        set({ MasterRouting: newRouting, configRules: newRules });
+        const hydrated = hydrateRawUoms(newRouting, newRules);
+        set({ MasterRouting: newRouting, configRules: hydrated.updated,
+          rawUomChanges: [...get().rawUomChanges, ...hydrated.changes] });
       }
     } catch (e) {
       console.error("Lỗi lazy load", e);
@@ -276,7 +331,19 @@ const useModelConfigStore = create((set, get) => ({
   },
 
   setRole: (partNo, role) => set(s => ({ configRules: { ...s.configRules, [partNo]: { ...s.configRules[partNo], role } } })),
-  enableScanning: (partNo, scanType) => set(s => ({ configRules: { ...s.configRules, [partNo]: { ...s.configRules[partNo], scanType } } })),
+  enableScanning: (partNo, scanType) => set(s => {
+    const matching = [];
+    const walk = (nodes) => (nodes || []).forEach(n => {
+      if (String(n.Component).trim() === partNo) matching.push(normalizedUom(n.Unit));
+      walk(n.children);
+    });
+    walk(s.MasterRouting);
+    const unique = [...new Set(matching.filter(Boolean))];
+    return { configRules: { ...s.configRules, [partNo]: {
+      ...s.configRules[partNo], scanType,
+      expected_uom: scanType === 'RAW_QTY' && unique.length === 1 ? unique[0] : ''
+    } } };
+  }),
   updateFixedString: (partNo, str) => set(s => ({ configRules: { ...s.configRules, [partNo]: { ...s.configRules[partNo], fixedString: str } } })),
   updateBoxQty: (partNo, qty) => set(s => ({ configRules: { ...s.configRules, [partNo]: { ...s.configRules[partNo], boxQTY: qty } } })),
   
@@ -360,7 +427,10 @@ const useModelConfigStore = create((set, get) => ({
 
   parseMasterRoutingToRules: () => {
     const { MasterRouting, configRules, configType, outSourcePN } = get();
+    const issues = rawUomIssues(MasterRouting, configRules);
+    if (issues.length) throw new Error(`RAW UOM validation failed:\n${issues.join('\n')}`);
     const rules = { mainInputs: [], rawMaterials: [] };
+    const registeredRaw = new Set();
     
     if (configType === 'PACKING') {
       rules.boxRule = null;
@@ -378,7 +448,10 @@ const useModelConfigStore = create((set, get) => ({
         const ruleObj = { partNumber: node.Component, fixedString: config.fixedString };
 
         if (config.scanType === 'MAIN_INPUT') rules.mainInputs.push(ruleObj);
-        else if (config.scanType === 'RAW_QTY') rules.rawMaterials.push(ruleObj);
+        else if (config.scanType === 'RAW_QTY' && !registeredRaw.has(node.Component)) {
+          registeredRaw.add(node.Component);
+          rules.rawMaterials.push({ ...ruleObj, expected_uom: normalizedUom(node.Unit), bom_id: node.IDBOM });
+        }
         else if (config.scanType === 'OUTPUT_MAIN') rules.outputMain = ruleObj;
         else if (config.scanType === 'BOX_RULE' && configType === 'PACKING') {
           // [ĐÃ CẬP NHẬT]: Gom thêm thuộc tính Wildcard vào cục boxRule để đẩy xuống môi trường Production
@@ -401,6 +474,8 @@ const useModelConfigStore = create((set, get) => ({
 
   saveConfig: async (partNo) => {
     const { scanRulesConfig, configType, outSourcePN, configRules, MasterRouting } = get();
+    const issues = rawUomIssues(MasterRouting, configRules);
+    if (issues.length) throw new Error(`RAW UOM validation failed:\n${issues.join('\n')}`);
     // ... (Code map IDBOM giữ nguyên) ...
     const idBomMap = {};
     const extractIdBoms = (nodes) => {

@@ -1,0 +1,25 @@
+{
+  "purpose": "MES2 Rework Phase 0: audit of 1-1 and Bulk RW, whole-batch freeze, allocation metrics, consumption and forward/reverse trace. Full current code for agent review.",
+  "modules": [],
+  "paths": [
+    "Interplex_MES_BE/app/api/v1/endpoints/WoValidation.py",
+    "Interplex_MES_BE/app/api/v1/endpoints/batchallocation.py",
+    "Interplex_MES_BE/app/api/v1/endpoints/traceability.py",
+    "Interplex_MES_BE/app/api/v1/endpoints/smart_repair.py",
+    "Interplex_MES_BE/app/api/v1/endpoints/packing_master.py",
+    "Interplex_MES_BE/app/api/v1/endpoints/logPacking.py",
+    "Interplex_MES_BE/app/api/v1/api.py",
+    "Interplex_MES_BE/app/models/legacy/masterWOlog.py",
+    "Interplex_MES_BE/app/schemas/WoValidationResponse.py",
+    "Interplex_MES_FE/src/api/workstationApi.js",
+    "Interplex_MES_FE/src/api/traceabilityAPI.js",
+    "Interplex_MES_FE/src/components/production/ActiveJobView.jsx",
+    "Interplex_MES_FE/src/components/production/AllocationView.jsx",
+    "Interplex_MES_FE/src/components/production/FrameBatchAllocator.jsx",
+    "Interplex_MES_FE/src/components/production/FrameMachiningProc.jsx",
+    "Interplex_MES_FE/src/components/production/FrameAssyPackingMaster.jsx",
+    "Interplex_MES_FE/src/components/production/SmartRepair.jsx",
+    "Interplex_MES_FE/src/components/traceability/TraceabilityView.jsx",
+    "Interplex_MES_FE/src/store/productionStore.js"
+  ]
+}

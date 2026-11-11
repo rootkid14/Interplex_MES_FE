@@ -66,13 +66,18 @@ export const workstationAPI = {
   },
   
 
-  logRawMaterial: async (wo, materialCode, qty, partNumber) => {
-    // Gọi API này để log vật liệu Raw Material (phụ liệu) kèm theo Part Number
+  // MES2 Phase C: the supplier barcode is authoritative for PN/QTY/UOM/Serial.
+  logRawMaterial: async (wo, barcode) => {
     const response = await apiClient.post('/validation/logRawMaterial', {
-        WO: wo,
-        RawMaterial: materialCode,
-        QTY: qty,
-        PartNO: partNumber
+      WO: Number(wo), RawMaterial: String(barcode).trim()
+    });
+    return response.data;
+  },
+
+  transferRawMaterial: async (wo, barcode, remainingQty, previousUsageId) => {
+    const response = await apiClient.post('/validation/transferRawMaterial', {
+      WO: Number(wo), RawMaterial: String(barcode).trim(),
+      RemainingQTY: String(remainingQty).trim(), PreviousUsageID: Number(previousUsageId)
     });
     return response.data;
   },

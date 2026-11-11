@@ -15,6 +15,7 @@ import DatabaseEnginePage from "./pages/DatabaseEngine";
 import PrintTravelerTab from "./pages/PrintTraveler";
 import WarehousePage from "./pages/Warehouse";
 import SmartRepair from "./components/production/SmartRepair";
+import BatchHoldView from "./components/utilities/BatchHoldView";
 
 const ProtectedRoute = ({ isAuthenticated, children }) => {
   if (!isAuthenticated) {
@@ -126,6 +127,10 @@ function App() {
             </ProtectedRoute>
           }
         />
+
+        <Route path="/qc-batch-hold" element={
+          <ProtectedRoute isAuthenticated={isAuthenticated}><BatchHoldView /></ProtectedRoute>
+        } />
 
         {/* CATCH ALL: Bắt các đường dẫn không tồn tại (404) */}
         <Route 

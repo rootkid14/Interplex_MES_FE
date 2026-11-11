@@ -1,13 +1,15 @@
 import React from 'react';
 import useAuthStore from '../../store/AuthStore';
 import { useTranslation } from 'react-i18next';
-import { LogOut, User, Bell, Settings, ChevronLeft, ChevronRight, Factory, Users, ScreenShare, FileWarning } from 'lucide-react';
+import { LogOut, User, Bell, Settings, ChevronLeft, ChevronRight, Factory, Users, ScreenShare, FileWarning, ShieldAlert } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 const Sidebar = ({ isSidebarOpen, setIsSidebarOpen }) => {
   const { user, logout } = useAuthStore();
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const mayHold = [user?.dept, user?.role].some((v) =>
+    ['qc', 'it', 'quality control'].includes(String(v || '').trim().toLowerCase()));
 
   const handleLogout = () => {
     if (window.confirm(t('app.confirmLogout'))) {
@@ -79,6 +81,12 @@ const Sidebar = ({ isSidebarOpen, setIsSidebarOpen }) => {
                   onClick={() => navigate('/')} 
               />
               
+              {mayHold && <SidebarItem
+                icon={<ShieldAlert size={20} />}
+                label="QC Batch Hold / Unhold"
+                onClick={() => navigate('/qc-batch-hold')}
+              />}
+
               {/* Menu dành riêng cho Admin (Bọc 2 nút trong thẻ Fragment <>) */}
               {user?.role?.toLowerCase() === 'admin' && (
                   <>

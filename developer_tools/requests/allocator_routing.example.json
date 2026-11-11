@@ -1,0 +1,5 @@
+{
+  "purpose": "Inspect Inhouse/Outsource Allocators and downstream routing before modification",
+  "modules": ["routing", "batch_allocator", "outsource_allocator"],
+  "paths": ["Interplex_MES_BE/app/api/v1/endpoints/WoValidation.py"]
+}

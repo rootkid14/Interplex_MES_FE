@@ -4,6 +4,7 @@ import { ScanLine, Boxes, AlertTriangle, Truck, Factory, ArrowLeft, House } from
 import BarcodeScanner from '../common/BarcodeScanner';
 import useProductionStore from '../../store/productionStore';
 import { workstationAPI } from '../../api/workstationApi';
+import { reworkAPI, rwApiError } from '../../api/reworkAPI';
 
 // Import 2 màn hình làm việc
 import FrameBatchAllocator from './FrameBatchAllocator';
@@ -32,6 +33,29 @@ const AllocationView = () => {
         if (!cleanedWO) return;
         setErrorMsg('');
         try {
+            // Registered BULK RW is a genuine MES JOB, intentionally without a SAP record.
+            // Never bypass SAP validation for other JOBs or unknown WO IDs.
+            let bulk = null;
+            try {
+                const rwResponse = await reworkAPI.details(cleanedWO);
+                if (rwResponse?.success && rwResponse?.data?.RW_Type === 'BULK') {
+                    bulk = rwResponse.data;
+                }
+            } catch (readError) {
+                // If RW registry is unreachable, regular SAP validation still applies.
+                console.warn('RW registry read failed; trying regular WO validation:', rwApiError(readError));
+            }
+            if (bulk) {
+                const inputPNs = [...new Set((bulk.InputBatches || []).map(x => String(x.PartNO || '').trim()).filter(Boolean))];
+                if (inputPNs.length !== 1) {
+                    setErrorMsg('Bulk RW phải có Input Batch với duy nhất một PartNO trước khi cấp tem.');
+                    return;
+                }
+                setCurrentAllocation({ WO: bulk.WO, ModelNO: inputPNs[0], Status: bulk.RW_Status === 'ACTIVE' ? 1 : 0,
+                    Type: 'Rework', WC_Type: 'BULK_REWORK', RW_Type: 'BULK' });
+                setJobId('');
+                return;
+            }
             const result = await workstationAPI.validateWorkOrder(cleanedWO, true, false);
             if (result.success) {
                 setCurrentAllocation(result.data); 

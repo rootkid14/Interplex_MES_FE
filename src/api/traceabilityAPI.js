@@ -1,6 +1,10 @@
 import apiClient from "./client";
 
 export const traceabilityApi = {
+  traceBatch: async (batch) => {
+    const response = await apiClient.get(`/tracebility/tracebybatch/${encodeURIComponent(batch)}`);
+    return response.data;
+  },
   // 1. Tìm BoxID dựa trên ProductID (Tem dán trên sản phẩm)
   searchBoxByProduct: async (productId) => {
     const response = await apiClient.get(`/tracebility/boxbyproduct/${encodeURIComponent(productId)}`);

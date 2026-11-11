@@ -5,6 +5,7 @@ import { BoxContentExpandable } from "../common/BoxContentExpandable";
 import BarcodeScanner from '../common/BarcodeScanner';
 import useProductionStore from '../../store/productionStore';
 import { workstationAPI } from '../../api/workstationApi';
+import useRawMaterialFlow from '../../hooks/useRawMaterialFlow';
 import DefectReportModal from "../common/DefectReportModals";
 import { useTranslation } from 'react-i18next';
 import WctrSelectionModal from "../common/WctrSelectionModal";
@@ -51,6 +52,13 @@ const FrameAssyPackingMaster = () => {
     const [boxInput, setBoxInput] = useState('');
     const [itemInput, setItemInput] = useState('');
     const [errorMsg, setErrorMsg] = useState('');
+    // MES2 Phase C: shared strict RAW parser, server validation and remainder modal.
+    const rawFlow = useRawMaterialFlow({
+        wo: woData.WO, rules: actualRules.rawMaterials || [],
+        onRefresh: async () => { await refreshMaterialHistory(); },
+        onError: (message) => setErrorMsg(message),
+    });
+
     const activeBox = masterData.boxes.find(b => !b.isFinished);
 
     // Scanners & Modals
@@ -60,8 +68,6 @@ const FrameAssyPackingMaster = () => {
     const [showDoneScanner, setShowDoneScanner] = useState(false);
     const [isAliasModalOpen, setIsAliasModalOpen] = useState(false);
 
-    const [qtyModal, setQtyModal] = useState({ isOpen: false, scannedCode: '', matchedRule: null });
-    const [inputQty, setInputQty] = useState('');
     const [remainderModal, setRemainderModal] = useState({
         isOpen: false,
         batch: '',
@@ -108,16 +114,29 @@ const FrameAssyPackingMaster = () => {
         const possible = requiredMainPNs.map(pn => groupedMain[pn] || 0);
         maxAllowedQty = Math.min(maxAllowedQty, ...possible);
     }
+    // MES2: a KG/M RAW amount cannot be compared to finished-product PCS.
+    // Keep PCS RAW legacy 1:1 limit where applicable; non-PCS RAW is presence-only.
+    // If ONLY non-PCS RAW drives packing, fail closed until a proper output conversion is configured.
+    const nonPcsRawRules = (actualRules.rawMaterials || []).filter(r =>
+        String(r?.expected_uom || '').trim().toUpperCase() !== 'PCS');
     if (requiredRawPNs.length > 0) {
         hasRequiredItems = true;
         const groupedRaw = masterData.rawMaterials.reduce((acc, item) => {
             acc[item.pn] = (acc[item.pn] || 0) + (Number(item.qty) || 0);
             return acc;
         }, {});
-        const possible = requiredRawPNs.map(pn => groupedRaw[pn] || 0);
-        maxAllowedQty = Math.min(maxAllowedQty, ...possible);
+        const pcsRawPNs = (actualRules.rawMaterials || [])
+            .filter(r => String(r?.expected_uom || '').trim().toUpperCase() === 'PCS')
+            .map(r => r.partNumber);
+        if (pcsRawPNs.length > 0) {
+            maxAllowedQty = Math.min(maxAllowedQty, ...pcsRawPNs.map(pn => groupedRaw[pn] || 0));
+        }
+        if (requiredRawPNs.some(pn => !(groupedRaw[pn] > 0))) maxAllowedQty = 0;
     }
-    if (!hasRequiredItems) maxAllowedQty = 99999; 
+    if (maxAllowedQty === Infinity && nonPcsRawRules.length > 0 && requiredMainPNs.length === 0) {
+        maxAllowedQty = 0;  // no valid PCS capacity for raw-only KG/M packing
+    }
+    if (maxAllowedQty === Infinity || !hasRequiredItems) maxAllowedQty = 99999; 
 
     const currentTotalPacked = masterData.boxes.reduce((sum, b) => sum + b.items.length, 0);
 
@@ -296,6 +315,8 @@ const FrameAssyPackingMaster = () => {
         if(!cleaned) return;
         setErrorMsg('');
 
+        if (await rawFlow.tryHandle(cleaned)) { setMatInput(''); return; }
+
         const matchedMain = (actualRules.mainInputs || []).find(r => r.fixedString && cleaned.toUpperCase().includes(r.fixedString.toUpperCase()));
         if (matchedMain) {
             try {
@@ -323,13 +344,6 @@ const FrameAssyPackingMaster = () => {
                     setErrorMsg(res.message || "Lỗi khi ghi nhận vật tư chính.");
                 }
             } catch (e) { setErrorMsg("Lỗi hệ thống khi ghi nhận Vật tư chính."); }
-            return;
-        }
-
-        const matchedRaw = (actualRules.rawMaterials || []).find(r => r.fixedString && cleaned.toUpperCase().includes(r.fixedString.toUpperCase()));
-        if (matchedRaw) {
-            setQtyModal({ isOpen: true, scannedCode: cleaned, matchedRule: matchedRaw });
-            setMatInput('');
             return;
         }
 
@@ -392,20 +406,6 @@ const FrameAssyPackingMaster = () => {
         }
     };
 
-    const handleSubmitRawQty = async () => {
-        const qty = parseFloat(inputQty);
-        if (isNaN(qty) || qty <= 0) return alert("Vui lòng nhập định mức hợp lệ!");
-        try {
-            const res = await workstationAPI.logRawMaterial(woData.WO, qtyModal.scannedCode, qty, qtyModal.matchedRule.partNumber);
-            if (res.success) {
-                const newItem = { code: qtyModal.scannedCode, pn: qtyModal.matchedRule.partNumber, qty: qty, time: new Date().toLocaleTimeString() };
-                setMasterData(prev => ({ ...prev, rawMaterials: [newItem, ...prev.rawMaterials] }));
-                setQtyModal({ isOpen: false, scannedCode: '', matchedRule: null });
-                setInputQty('');
-            } else alert(res.message);
-        } catch (error) { alert("Lỗi khi ghi nhận tiêu hao phụ liệu!"); }
-    };
-
     // ========================================================
     // 5. ĐÓNG GÓI & TỰ ĐỘNG CHỐT THÙNG (AUTO-FINISH)
     // ========================================================
@@ -431,6 +431,7 @@ const FrameAssyPackingMaster = () => {
 
         if (masterData.boxes.some(b => b.id === cleanedCode)) return setErrorMsg("Mã Bao bì này đã được sử dụng!");
         if (activeBox) return setErrorMsg("Vui lòng hoàn tất Thùng hiện tại trước khi tạo mới!");
+        if (maxAllowedQty === 0 && nonPcsRawRules.length > 0 && requiredMainPNs.length === 0) return setErrorMsg('Không thể quy đổi RAW KG/M sang PCS để tính giới hạn Packing. Cần Main Input PCS hoặc quy tắc chuyển đổi được duyệt.');
         if (currentTotalPacked >= maxAllowedQty) return setErrorMsg(`Thiếu vật tư! Vui lòng Nạp thêm vật tư trước khi đóng gói.`);
 
         try {
@@ -644,6 +645,7 @@ const FrameAssyPackingMaster = () => {
                 key: `${pn}-${index}`,
                 pn,
                 fixedString: rule.fixedString || '',
+                expectedUom: rule.expected_uom || 'PCS',
                 isScanned: matchedItems.length > 0,
                 scanCount: matchedItems.length,
                 totalQty: matchedItems.reduce((sum, item) => sum + (Number(item.qty) || 0), 0)
@@ -797,7 +799,7 @@ const FrameAssyPackingMaster = () => {
                                                             {item.isScanned ? 'Đã scan' : 'Chưa scan'}
                                                         </p>
                                                         <p className="text-xs text-slate-400 mt-1">
-                                                            {item.scanCount} mã · {item.totalQty} PCS
+                                                            {item.scanCount} mã · {item.totalQty} {item.expectedUom}
                                                         </p>
                                                     </div>
                                                 </div>
@@ -820,7 +822,7 @@ const FrameAssyPackingMaster = () => {
                                             <div key={`${item.code}-${i}`} className="bg-slate-800/50 border border-slate-700 p-3 rounded-lg flex justify-between items-center hover:bg-slate-700 transition-colors">
                                                 <div>
                                                     <p className="text-emerald-300 font-mono font-bold">{item.code}</p>
-                                                    <p className="text-slate-500 text-xs mt-1">PN: {item.pn} | Kích hoạt: {item.time}</p>
+                                                    <p className="text-slate-500 text-xs mt-1">PN: {item.pn}{item.uom ? ` | UOM: ${item.uom}` : ""} | Kích hoạt: {item.time}</p>
                                                 </div>
                                                 <span className="bg-slate-900 text-emerald-400 px-3 py-1 rounded font-bold border border-emerald-500/30">+{item.qty}</span>
                                             </div>
@@ -984,18 +986,8 @@ const FrameAssyPackingMaster = () => {
                 </div>
             )}
 
-            {qtyModal.isOpen && (
-                <div className="absolute inset-0 z-50 bg-slate-900/90 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-slate-800 w-full max-w-md rounded-2xl border border-emerald-500/50 shadow-2xl p-6">
-                        <h2 className="text-xl font-bold text-emerald-400 mb-4 border-b border-slate-700 pb-3 flex items-center justify-between">
-                            Khai báo số lượng tiêu hao <button onClick={() => setQtyModal({...qtyModal, isOpen: false})}><X className="text-slate-400 hover:text-white"/></button>
-                        </h2>
-                        <div className="mb-4 bg-slate-900 p-3 rounded text-sm text-emerald-300 font-mono break-all">{qtyModal.scannedCode}</div>
-                        <input type="number" value={inputQty} onChange={e => setInputQty(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSubmitRawQty()} autoFocus className="w-full bg-slate-900 border border-emerald-500/50 text-white px-4 py-4 rounded-xl focus:ring-2 outline-none text-2xl text-center mb-4" />
-                        <button onClick={handleSubmitRawQty} className="w-full bg-emerald-600 py-4 rounded-xl font-bold text-white shadow-lg">XÁC NHẬN TIÊU HAO</button>
-                    </div>
-                </div>
-            )}
+            {/* MES2 Phase C: shared RAW remainder modal; initial QTY is read from barcode. */}
+            {rawFlow.modal}
 
             {/* 2. Modal Đóng hộp non (Skip Box) */}
             {skipModal.isOpen && (
