@@ -16,6 +16,7 @@ import PrintTravelerTab from "./pages/PrintTraveler";
 import WarehousePage from "./pages/Warehouse";
 import SmartRepair from "./components/production/SmartRepair";
 import BatchHoldView from "./components/utilities/BatchHoldView";
+import MasterDataCSVView from "./components/utilities/MasterDataCSVView"; // MES2_MASTER_CSV_IMPORT
 
 const ProtectedRoute = ({ isAuthenticated, children }) => {
   if (!isAuthenticated) {
@@ -131,6 +132,8 @@ function App() {
         <Route path="/qc-batch-hold" element={
           <ProtectedRoute isAuthenticated={isAuthenticated}><BatchHoldView /></ProtectedRoute>
         } />
+
+        <Route path="/master-data-csv" element={<ProtectedRoute isAuthenticated={isAuthenticated}><MasterDataCSVView /></ProtectedRoute>} />
 
         {/* CATCH ALL: Bắt các đường dẫn không tồn tại (404) */}
         <Route 

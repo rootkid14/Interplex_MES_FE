@@ -95,3 +95,17 @@
 .qchw-filter-hint.error { color: #fda4af; }
 @media (max-width: 1300px) { .qchw-filters { grid-template-columns: repeat(2,minmax(0,1fr)); } .qchw-filter-keyword { grid-column: auto; } }
 @media (max-width: 560px) { .qchw-filters { grid-template-columns: 1fr; } .qchw-list-actions { flex-wrap: wrap; justify-content: flex-end; } .qchw-filter-actions { justify-content: stretch; } .qchw-filter-actions .qchw-btn { flex: 1; } }
+
+/* QC Hold v1.3: controlled bulk Unhold, selection independent of pagination. */
+.qchw-bulk-bar { border: 1px solid #3a6475; border-radius: 12px; margin: 15px 0;
+  padding: 14px; background: #102b37; display: flex; flex-direction: column; gap: 12px; }
+.qchw-bulk-options, .qchw-bulk-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.qchw-bulk-options label { display: inline-flex; align-items: center; gap: 8px; margin: 0;
+  font-weight: 700; cursor: pointer; }
+.qchw-bulk-options input[type="radio"] { width: 17px; height: 17px; padding: 0 !important; accent-color: #5cb8f5; }
+.qchw-bulk-bar small { color: #b4cad6; }
+.qchw-row-check { width: 17px !important; height: 17px !important; accent-color: #68c1fb;
+  cursor: pointer; padding: 0 !important; }
+.qchw-row-check:disabled { opacity: .32; cursor: not-allowed; }
+.qchw-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden;
+  clip: rect(0,0,0,0); white-space: nowrap; border: 0; }

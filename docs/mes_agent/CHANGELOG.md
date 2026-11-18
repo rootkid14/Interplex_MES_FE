@@ -1,3 +1,8 @@
+## 2026-11-18 — QC Hold Workspace v1.3 Bulk Unhold
+
+- Preview/confirm batch bulk QC Unhold with selected or applied-filter scope; preserve permanent RW FROZEN.
+- Atomic backend transaction and one audit entry per released Batch. No SQL migration.
+
 # MES agent documentation changelog
 
 | Date (YYYY-MM-DD) | Update | Module docs updated | Code modified? | Release notes |

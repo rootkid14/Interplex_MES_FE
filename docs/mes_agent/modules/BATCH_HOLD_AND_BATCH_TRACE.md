@@ -71,3 +71,15 @@ workstation's changes reflected on manual refresh, permanent RW IsFrozen never c
 - Validation: test scoped filters; date boundaries; literal `%`, `_`, `[`, `\`; CSV all matching
   pages, filename, BOM/columns, formula escape; 401/403 rejection; zero matches; QC only scope;
   RW FROZEN never released; two workstation update after refresh.
+
+
+## v1.3 — Bulk QC Unhold
+
+- Supported selection: explicit Batch checkboxes (across pages) OR all matching the *applied* server-side filters.
+- Full-filter mode requires a keyword or UTC hold-date bound. Limit **500 matched rows per operation**, including RW Frozen.
+- APIs: `POST /qc-batch/bulk-unhold/preview`, `/qc-batch/bulk-unhold/apply`.
+- Each endpoint reauthenticates the QC/IT operator. Preview provides count and data fingerprint; apply rejects expired (>120s) or stale preview and re-reads with `UPDLOCK, HOLDLOCK`.
+- SQL transaction is all-or-nothing: clear `IsQCHeld`, null `QCHeldAtUTC`, append one `UNHOLD` row to `MES_BatchHoldAudit` for each changed Batch. Never touch `IsFrozen`.
+- RW Frozen batches may match filters but are skipped with an explicit count. Only selected rows are eligible for explicit selection.
+- **Warning:** The existing MES password login is not backed by a signed session; use HTTPS, review access controls, and do not expose API directly to the internet.
+- No SQL migration; requires QC Hold V0003 and v1.2 schema/code.

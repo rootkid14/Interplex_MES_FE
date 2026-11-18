@@ -50,7 +50,10 @@ export default function useRawMaterialFlow({ wo, rules, onRefresh, onError }) {
       const label = parseRawBarcode(raw);
       const expected = String(rule.expected_uom || '').trim().toUpperCase();
       if (!expected) throw new Error('Scan Rule chưa có expected_uom. Hãy lưu lại Model Config và tải lại JOB.');
-      if (label.uom !== expected) throw new Error(`UOM sai: yêu cầu ${expected}, đã quét ${label.uom}.`);
+      // Accept the BOM UOM or a single plural 'S' suffix (PC/PCS, KG/KGS).
+      // Never use startsWith: it would wrongly accept PCX or KGSX.
+      const uomMatches = label.uom === expected || (!expected.endsWith('S') && label.uom === `${expected}S`);
+      if (!uomMatches) throw new Error(`UOM sai: yêu cầu ${expected} (hoặc ${expected}S), đã quét ${label.uom}.`);
       busy.current = true;
       const response = await workstationAPI.logRawMaterial(wo, label.raw);
       if (response.success) {

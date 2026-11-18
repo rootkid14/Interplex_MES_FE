@@ -87,6 +87,12 @@ const Sidebar = ({ isSidebarOpen, setIsSidebarOpen }) => {
                 onClick={() => navigate('/qc-batch-hold')}
               />}
 
+              {(String(user?.role || '').trim().toLowerCase() === 'admin' || String(user?.dept || '').trim().toLowerCase() === 'it') && <SidebarItem
+                icon={<FileWarning size={20} />}
+                label="Master Data CSV (Line / Defect)"
+                onClick={() => navigate('/master-data-csv')}
+              />}
+
               {/* Menu dành riêng cho Admin (Bọc 2 nút trong thẻ Fragment <>) */}
               {user?.role?.toLowerCase() === 'admin' && (
                   <>

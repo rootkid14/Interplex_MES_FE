@@ -13,7 +13,7 @@ const EMPTY_FILTERS = Object.freeze({
   Keyword: '', SearchBy: 'ALL', Scope: 'ALL', HoldFrom: '', HoldTo: '', Sort: 'NEWEST',
 });
 const permitted = (user) => [user?.dept, user?.role].some((value) =>
-  ['qc', 'it', 'quality control'].includes(String(value || '').trim().toLowerCase()));
+  ['qa', 'qc', 'it', 'quality control'].includes(String(value || '').trim().toLowerCase()));
 
 const errorText = (error) => {
   const detail = error?.response?.data?.detail;
@@ -47,6 +47,9 @@ const BatchHoldView = () => {
   const [sortOrder, setSortOrder] = useState('NEWEST');
   const [appliedFilters, setAppliedFilters] = useState({ ...EMPTY_FILTERS });
   const [exporting, setExporting] = useState(false);
+  const [selectedCodes, setSelectedCodes] = useState([]);
+  const [bulkMode, setBulkMode] = useState('SELECTED');
+  const [bulkBusy, setBulkBusy] = useState(false);
   const [unlocked, setUnlocked] = useState(false);
   const [loadingList, setLoadingList] = useState(false);
   const [listError, setListError] = useState('');
@@ -64,7 +67,7 @@ const BatchHoldView = () => {
 
   const loadHeld = useCallback(async (nextPage, nextFilters, credential) => {
     if (!credential || !Number.isSafeInteger(actorId) || actorId <= 0) {
-      setListError('Nhập mật khẩu QC/IT hợp lệ để tải danh sách đang Hold.');
+      setListError('Nhập mật khẩu QA/QC/IT hợp lệ để tải danh sách đang Hold.');
       return false;
     }
     setLoadingList(true);
@@ -103,6 +106,8 @@ const BatchHoldView = () => {
     setTotal(0);
     setDetail(null);
     setPassword('');
+    setSelectedCodes([]);
+    setBulkMode('SELECTED');
   }, [actorId]);
 
   const lookup = async (raw) => {
@@ -126,7 +131,7 @@ const BatchHoldView = () => {
       return;
     }
     if (reason.trim().length < 3 || !password || !Number.isSafeInteger(actorId)) {
-      setFeedback({ type: 'error', text: 'Nhập lý do ít nhất 3 ký tự và mật khẩu tài khoản QC/IT.' });
+      setFeedback({ type: 'error', text: 'Nhập lý do ít nhất 3 ký tự và mật khẩu tài khoản QA/QC/IT.' });
       return;
     }
     if (!window.confirm(`Xác nhận ${hold ? 'QC HOLD' : 'QC UNHOLD'} toàn bộ Batch ${detail.Batch}?`)) return;
@@ -159,6 +164,8 @@ const BatchHoldView = () => {
       setListError('Ngày Hold bắt đầu không được sau ngày kết thúc.');
       return;
     }
+    setSelectedCodes([]);
+    setBulkMode('SELECTED');
     await loadHeld(1, draftFilters, password);
   };
 
@@ -166,6 +173,8 @@ const BatchHoldView = () => {
     setFilter(''); setSearchBy('ALL'); setScope('ALL');
     setHoldFrom(''); setHoldTo(''); setSortOrder('NEWEST');
     setListError('');
+    setSelectedCodes([]);
+    setBulkMode('SELECTED');
     if (password) await loadHeld(1, { ...EMPTY_FILTERS }, password);
   };
 
@@ -190,8 +199,59 @@ const BatchHoldView = () => {
     } finally { setExporting(false); }
   };
 
+  const selectablePageCodes = rows.filter((r) => !r.IsFrozen).map((r) => r.Batch);
+  const allVisibleSelected = selectablePageCodes.length > 0 &&
+    selectablePageCodes.every((batch) => selectedCodes.includes(batch));
+  const toggleSelected = (batch) => setSelectedCodes((previous) =>
+    previous.includes(batch) ? previous.filter((value) => value !== batch)
+      : previous.length >= 500 ? previous : [...previous, batch]);
+  const togglePage = () => setSelectedCodes((previous) => allVisibleSelected
+    ? previous.filter((value) => !selectablePageCodes.includes(value))
+    : [...new Set([...previous, ...selectablePageCodes])].slice(0, 500));
+
+  const bulkUnhold = async () => {
+    if (!unlocked || bulkBusy || busy || loadingList || exporting || !password ||
+        reason.trim().length < 3 || filtersDirty || dateError) return;
+    if (bulkMode === 'SELECTED' && selectedCodes.length === 0) return;
+    if (bulkMode === 'FILTERED' && !appliedFilters.Keyword && !appliedFilters.HoldFrom && !appliedFilters.HoldTo) {
+      setListError('Unhold theo bộ lọc yêu cầu từ khóa hoặc khoảng ngày. Không thể thả toàn bộ danh sách bằng bộ lọc mặc định.');
+      return;
+    }
+    setBulkBusy(true); setListError(''); setFeedback(null);
+    try {
+      const request = {
+        ActorID: actorId, Password: password, ...appliedFilters,
+        Mode: bulkMode, Batches: bulkMode === 'SELECTED' ? selectedCodes : [],
+      };
+      const preview = await qcBatchAPI.previewBulkUnhold(request);
+      if (!preview.success) throw new Error(preview.message || 'Không thể xem trước danh sách Unhold.');
+      const data = preview.data || {};
+      const prompt = `XÁC NHẬN QC UNHOLD HÀNG LOẠT\n\n` +
+        `Phạm vi: ${bulkMode === 'SELECTED' ? 'Các Batch đã chọn' : 'TẤT CẢ Batch khớp bộ lọc'}\n` +
+        `Batch khớp: ${data.Matched}\n` +
+        `Sẽ QC UNHOLD: ${data.Eligible}\n` +
+        `Giữ nguyên RW FROZEN: ${data.ProtectedFrozen}\n\n` +
+        `Lý do: ${reason.trim()}\n\nThực hiện?`;
+      if (!window.confirm(prompt)) return;
+      const outcome = await qcBatchAPI.applyBulkUnhold({
+        ...request, Reason: reason.trim(), ConfirmCount: data.Eligible,
+        PreviewToken: data.PreviewToken, PreviewAtUTC: data.PreviewAtUTC,
+      });
+      if (!outcome.success) throw new Error(outcome.message || 'Unhold hàng loạt thất bại.');
+      setFeedback({ type: 'success', text: `Đã QC UNHOLD ${outcome.data.Unheld} Batch; ${outcome.data.SkippedFrozen} Batch RW FROZEN được giữ nguyên.` });
+      setSelectedCodes([]); setBulkMode('SELECTED'); setReason('');
+      if (detail?.Batch) {
+        try { const refreshed = await qcBatchAPI.status(detail.Batch); if (refreshed.success) setDetail(refreshed.data); }
+        catch { /* The batch may have been removed elsewhere; next lookup shows its state. */ }
+      }
+      await loadHeld(1, appliedFilters, password);
+    } catch (error) {
+      setListError(errorText(error));
+    } finally { setBulkBusy(false); }
+  };
+
   if (!allowed) return <main className="qchw-workspace"><div className="qchw-denied" role="alert">
-    <ShieldAlert size={28} /> Chỉ tài khoản QC/IT được phép truy cập workspace này.
+    <ShieldAlert size={28} /> Chỉ tài khoản QA/QC/IT được phép truy cập workspace này.
   </div></main>;
 
   return <main className="qchw-workspace">
@@ -241,6 +301,7 @@ const BatchHoldView = () => {
         <input id="qchw-password" type="password" autoComplete="off" value={password}
           placeholder="Mật khẩu tài khoản hiện tại" onChange={(event) => {
             setPassword(event.target.value); setUnlocked(false); setRows([]); setTotal(0); setListError('');
+            setSelectedCodes([]); setBulkMode('SELECTED');
           }}/>
         <small className="qchw-helper">Mật khẩu chỉ giữ trong bộ nhớ trang này; dùng để xác thực thao tác và tải danh sách QC Hold.</small>
         <div className="qchw-actions">
@@ -320,7 +381,29 @@ const BatchHoldView = () => {
           {dateError && <div className="qchw-filter-hint error" role="alert">Ngày bắt đầu phải nhỏ hơn hoặc bằng ngày kết thúc.</div>}
           {filtersDirty && <div className="qchw-filter-hint">Bộ lọc đã thay đổi — nhấn <strong>Áp dụng</strong> trước khi xuất CSV.</div>}
         </form>
-        <div className="qchw-list-meta"><span>{unlocked ? `${total} Batch khớp bộ lọc đang Hold` : 'Danh sách yêu cầu xác thực QC/IT'}</span>
+        <div className="qchw-bulk-bar" aria-label="QC Unhold hàng loạt">
+          <div className="qchw-bulk-options">
+            <label><input type="radio" name="qchw-bulk-mode" value="SELECTED" checked={bulkMode === 'SELECTED'}
+              onChange={() => setBulkMode('SELECTED')}/> Batch đã chọn ({selectedCodes.length})</label>
+            <label><input type="radio" name="qchw-bulk-mode" value="FILTERED" checked={bulkMode === 'FILTERED'}
+              onChange={() => setBulkMode('FILTERED')}/> Tất cả Batch khớp bộ lọc ({total})</label>
+          </div>
+          <div className="qchw-bulk-buttons">
+            <button type="button" className="qchw-btn qchw-btn-clear" onClick={togglePage}
+              disabled={!unlocked || loadingList || bulkBusy || selectablePageCodes.length === 0}>
+              {allVisibleSelected ? 'Bỏ chọn trang' : 'Chọn trang này'}</button>
+            <button type="button" className="qchw-btn qchw-btn-clear" onClick={() => setSelectedCodes([])}
+              disabled={selectedCodes.length === 0 || bulkBusy}>Bỏ chọn tất cả</button>
+            <button type="button" className="qchw-btn qchw-btn-green" onClick={bulkUnhold}
+              disabled={!unlocked || !password || bulkBusy || busy || loadingList || exporting ||
+                filtersDirty || dateError || total === 0 || reason.trim().length < 3 ||
+                (bulkMode === 'SELECTED' && selectedCodes.length === 0)}>
+              <Unlock size={16}/>{bulkBusy ? 'Đang xử lý…' : 'UNHOLD hàng loạt'}</button>
+          </div>
+          <small>Giới hạn 500 Batch/lần · Cần lý do và mật khẩu ở Panel 01 · Không giải phóng RW FROZEN.
+            Khi chọn “Tất cả khớp bộ lọc”, cần từ khóa hoặc khoảng ngày đã áp dụng.</small>
+        </div>
+        <div className="qchw-list-meta"><span>{unlocked ? `${total} Batch khớp bộ lọc đang Hold` : 'Danh sách yêu cầu xác thực QA/QC/IT'}</span>
           <span><Clock3 size={13}/> {lastRefreshed ? `Cập nhật: ${lastRefreshed}` : 'Chưa tải'}</span></div>
         {listError && <div role="alert" className="qchw-feedback error"><AlertCircle size={16}/>{listError}</div>}
         {!unlocked ? <div className="qchw-empty"><LockKeyhole size={32}/><strong>Danh sách được bảo vệ</strong>
@@ -329,9 +412,12 @@ const BatchHoldView = () => {
           : rows.length === 0 ? <div className="qchw-empty"><ShieldCheck size={32}/><strong>Không có Batch phù hợp</strong>
             <span>Hiện không tìm thấy Batch đang QC Hold theo bộ lọc này.</span></div>
           : <div className="qchw-table-wrap"><table className="qchw-table"><thead><tr>
-            <th>Batch ID</th><th>PartNO</th><th>Born WO</th><th>QTY</th><th>Hold Since (UTC)</th><th>Trạng thái</th>
+            <th><span className="qchw-sr-only">Chọn</span></th><th>Batch ID</th><th>PartNO</th><th>Born WO</th><th>QTY</th><th>Hold Since (UTC)</th><th>Trạng thái</th>
           </tr></thead><tbody>
             {rows.map((row) => <tr key={row.Batch} className={detail?.Batch === row.Batch ? 'selected' : ''}>
+              <td><input type="checkbox" className="qchw-row-check" aria-label={`Chọn Batch ${row.Batch}`}
+                checked={selectedCodes.includes(row.Batch)} disabled={row.IsFrozen || bulkBusy}
+                onChange={() => toggleSelected(row.Batch)}/></td>
               <td><button type="button" className="qchw-row-link" title="Xem và xử lý Batch" onClick={() => lookup(row.Batch)}>{row.Batch}</button></td>
               <td>{row.PartNO || '—'}</td><td>{row.BornWO ?? '—'}</td><td className="qchw-num">{row.QTY}</td>
               <td className="qchw-date">{when(row.QCHeldAtUTC)}</td>
