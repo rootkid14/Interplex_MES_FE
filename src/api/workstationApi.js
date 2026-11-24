@@ -142,6 +142,16 @@ export const workstationAPI = {
     return response.data;
   },
 
+  // Quantity Mode: tạo PN ảo + đóng thùng trong một transaction ở Backend.
+  confirmPackingBoxQuantity: async (packingWo, boxId, actualQty) => {
+    const response = await apiClient.post('/packing/master/confirm_box_quantity', {
+      PackingWO: Number(packingWo),
+      BoxId: String(boxId).trim(),
+      ActualQty: Number(actualQty),
+    });
+    return response.data;
+  },
+
   // Chỉ xác nhận đóng thùng hoặc skip; không gửi lại mảng Items.
   finishPackingBox: async (payload) => {
     const response = await apiClient.post(

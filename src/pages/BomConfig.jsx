@@ -150,6 +150,9 @@ const ConfigTableRow = ({ node, depth = 0 }) => {
               ) : (
                   <div className="w-full flex flex-col gap-1">
                     <input type="text" placeholder="Format (VD: P/N:)" value={config.fixedString} onChange={(e) => updateFixedString(node.Component, e.target.value)} className="w-full bg-slate-900 border border-slate-600 text-emerald-300 text-sm px-3 py-1.5 rounded font-mono outline-none focus:border-emerald-500" />
+                    {config.scanType === 'OUTPUT_MAIN' && isHalb && configType === 'PACKING' && (
+                      <span className="text-xs text-amber-300">Để trống Format để Packing nhập QTY/thùng (mã ảo = PN). Vẫn cần liên kết Assy WO.</span>
+                    )}
                     {config.scanType === 'RAW_QTY' && (
                       <span className={`text-xs font-bold ${node.Unit?.trim() ? 'text-amber-300' : 'text-red-400'}`}>
                         UOM from BOM: {node.Unit?.trim().toUpperCase() || 'MISSING — cannot save'}
@@ -408,7 +411,7 @@ const ReviewModal = ({ onClose, onSave }) => {
 // 5. MAIN LAYOUT
 // ==========================================
 const BomConfig = ({ onClose }) => {
-  const { MasterRouting, isLoading, fetchConfigOrBom, parseMasterRoutingToRules, saveConfig, configType, setConfigType, hideIgnored, toggleHideIgnored, globalEcnAlert, acknowledgeGlobalEcn, ecnContext, clearEcnContext } = useModelConfigStore();
+  const { MasterRouting, isLoading, loadError, fetchConfigOrBom, parseMasterRoutingToRules, saveConfig, configType, setConfigType, hideIgnored, toggleHideIgnored, globalEcnAlert, acknowledgeGlobalEcn, ecnContext, clearEcnContext } = useModelConfigStore();
   const navigate = useNavigate();
   const [searchPN, setSearchPN] = useState('');
   const [showSandbox, setShowSandbox] = useState(false);
@@ -591,6 +594,8 @@ const BomConfig = ({ onClose }) => {
       <div className="flex-1 p-6 overflow-auto bg-slate-950 relative">
         {isLoading ? (
            <div className="absolute inset-0 flex items-center justify-center text-blue-400 animate-pulse font-bold text-lg">SCANNING...</div>
+        ) : loadError ? (
+           <div role="alert" className="absolute inset-0 flex items-center justify-center text-rose-400 font-semibold px-8 text-center">BOM load failed: {loadError}. Reload the configuration before generating rules.</div>
         ) : MasterRouting.length === 0 ? (
            <div className="absolute inset-0 flex items-center justify-center text-slate-600 italic">SYSTEM READY.</div>
         ) : (

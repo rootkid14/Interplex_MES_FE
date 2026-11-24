@@ -1,0 +1,32 @@
+[
+  {
+    "path": "Interplex_MES_BE/app/api/v1/endpoints/packing_master.py",
+    "pre_sha256": "ba063653084c74c80576d91ed9cd2b9e1a9f0d96bba8351bfe080608155b5210",
+    "post_sha256": "8e4d468e67e100cce78ecfff4ed275adc5c215a05d51e62e0dc3ae9e9cb52ef0"
+  },
+  {
+    "path": "Interplex_MES_BE/app/api/v1/endpoints/traceability.py",
+    "pre_sha256": "36140a1775339a5da5e1363999354ee21b8591daea57ac72ff6396465d7d0666",
+    "post_sha256": "0aaa63f446874871bb27b5f6daa1a612eead87171f669d5a62b7b050462977bb"
+  },
+  {
+    "path": "Interplex_MES_FE/src/components/production/FrameAssyPackingMaster.jsx",
+    "pre_sha256": "d98295e184d1dbf77e664028ee7a1638255ee61c9bbcc159450517d26db80501",
+    "post_sha256": "c156fa8354c083d51ea827cd725ec11f48278737728c3d0202927fc7fc3b7791"
+  },
+  {
+    "path": "Interplex_MES_FE/src/api/workstationApi.js",
+    "pre_sha256": "23e861a72b1b511624562d035cf895ffd891de5a9e0cc87af6adfd51c1ed8bca",
+    "post_sha256": "5403991175517b3a00e31cae9ad0a6fc5a2d7713af0f56e6a41ad92fa3145fec"
+  },
+  {
+    "path": "Interplex_MES_FE/src/pages/BomConfig.jsx",
+    "pre_sha256": "ae6f5b793ed326fbd0c75adac6934abc53c18ebc7e6d33ce4962309dee7279fc",
+    "post_sha256": "7be37f4b193fcbae8f4ba4926a9050b49f620c19e5f5ec2ba5e2e5d0dd1b46ac"
+  },
+  {
+    "path": "Interplex_MES_FE/src/components/production/FramePackingProc.jsx",
+    "pre_sha256": "de6ac980ebe4aa135e69931b221d6d8b3d7a0f6d2fbc01cb19f4dfdd475da20a",
+    "post_sha256": "5eb98ee673847ef5af4c0f79d6a6310a0781e1e63d296315ccb039a539019f88"
+  }
+]

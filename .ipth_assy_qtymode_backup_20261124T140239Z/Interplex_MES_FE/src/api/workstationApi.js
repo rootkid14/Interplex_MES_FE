@@ -1,0 +1,387 @@
+import apiClient from "./client";
+export const workstationAPI = {
+  /**
+   * Gọi API Backend để xác thực mã Lệnh Sản Xuất (WO)
+   * @param {string} scannedWO - Mã WO vừa quét
+   * @returns {Promise<Object>} - Gói StandardResponse { success, message, data }
+   */
+  validateWorkOrder: async (wo, isAllocation = false, isRework = false) => {
+    try {
+      // Truyền thêm is_rework vào URL query
+      const response = await apiClient.get(`/validation/validate/${wo}?is_allocation=${isAllocation}&is_rework=${isRework}`);
+      return response.data;
+    } catch (error) {
+      throw error;
+    }
+  },
+  
+  checkAssyPackingLink: async (assyWo, packingWo) => {
+    const response = await apiClient.post(
+      '/validation/checkAssyPackingLink',
+      {
+        AssyWO: Number(assyWo),
+        PackingWO: Number(packingWo),
+      }
+    );
+    return response.data;
+  },
+
+  linkAssyPacking: async (assyWo, packingWo) => {
+    const response = await apiClient.post(
+      '/validation/linkAssyPacking',
+      {
+        AssyWO: Number(assyWo),
+        PackingWO: Number(packingWo),
+      }
+    );
+    return response.data;
+  },
+
+  setWctr: async (wo, wctr) => {
+    // Gọi method POST và gửi kèm body dạng JSON { WO, WCtr }
+    const response = await apiClient.post('/validation/setWCTR', {
+        WO: wo,
+        WCtr: wctr
+    });
+    return response.data;
+  },
+
+  logInputMain: async (wo, batchCode) => {
+    // Gọi API để ghi nhận vật liệu Input Batch chính.
+    const response = await apiClient.post('/validation/logInputMain', {
+        WO: Number(wo),
+        Batch: String(batchCode).trim()
+    });
+    return response.data;
+  },
+
+  transferInputBatch: async (wo, batchCode, remainingQty) => {
+    // RemainingQTY là phần còn dư được chuyển sang WO mới.
+    const response = await apiClient.post('/validation/transferInputBatch', {
+        WO: Number(wo),
+        Batch: String(batchCode).trim(),
+        RemainingQTY: Number(remainingQty)
+    });
+    return response.data;
+  },
+  
+
+  // MES2 Phase C: the supplier barcode is authoritative for PN/QTY/UOM/Serial.
+  logRawMaterial: async (wo, barcode) => {
+    const response = await apiClient.post('/validation/logRawMaterial', {
+      WO: Number(wo), RawMaterial: String(barcode).trim()
+    });
+    return response.data;
+  },
+
+  transferRawMaterial: async (wo, barcode, remainingQty, previousUsageId) => {
+    const response = await apiClient.post('/validation/transferRawMaterial', {
+      WO: Number(wo), RawMaterial: String(barcode).trim(),
+      RemainingQTY: String(remainingQty).trim(), PreviousUsageID: Number(previousUsageId)
+    });
+    return response.data;
+  },
+
+  getLoggedMaterials: async (wo) => {
+    const response = await apiClient.get(`/validation/getLoggedMaterials/${wo}`);
+    return response.data;
+  },
+
+  logDefect: async (payload) => {
+    // payload bao gồm: { WO, PartNO, QTY, Description, Type }
+    const response = await apiClient.post('/validation/defectLog', payload);
+    return response.data;
+  },
+
+  requestMaterial: async (payload) => {
+    // payload bao gồm: { WO, PartNO, QTY, Type }
+    const response = await apiClient.post('/validation/materialRequest', payload);
+    return response.data;
+  },
+
+  markDone: async (payload) => {
+    // payload sẽ là: { WO: 123456, Status: 0 }
+    const response = await apiClient.post('/validation/markdone', payload);
+    return response.data;
+  },
+
+  allocateBatches: async (payload) => {
+    // Payload dự kiến: { WO: 12345, Batches: [{code: "B01", qty: 50}, {code: "B02", qty: 25}] }
+    const response = await apiClient.post('/validation/batchallocate', payload);
+    return response.data;
+  },
+
+  // Giữ endpoint cũ cho các màn hình/module chưa migrate.
+  logPacking: async (payload) => {
+    const response = await apiClient.post('/packing/logPacking', payload);
+    return response.data;
+  },
+
+  // Scan box hợp lệ -> tạo Box_Status với Status = 0.
+  createPackingBox: async (packingWo, boxId) => {
+    const response = await apiClient.post(
+      '/packing/master/create_box',
+      {
+        PackingWO: Number(packingWo),
+        BoxId: String(boxId).trim(),
+      }
+    );
+    return response.data;
+  },
+
+  // Scan item nào -> commit PackingLogItems ngay item đó.
+  logPackingItem: async (packingWo, boxId, itemCode) => {
+    const response = await apiClient.post(
+      '/packing/master/log_box_item',
+      {
+        PackingWO: Number(packingWo),
+        BoxId: String(boxId).trim(),
+        ItemCode: String(itemCode).trim(),
+      }
+    );
+    return response.data;
+  },
+
+  // Chỉ xác nhận đóng thùng hoặc skip; không gửi lại mảng Items.
+  finishPackingBox: async (payload) => {
+    const response = await apiClient.post(
+      '/packing/master/finish_box',
+      {
+        PackingWO: Number(payload.PackingWO),
+        BoxId: String(payload.BoxId).trim(),
+        PN: String(payload.PN || '').trim(),
+        IsSkipped: Boolean(payload.IsSkipped),
+        SkipReason: String(payload.SkipReason || ''),
+      }
+    );
+    return response.data;
+  },
+
+  removePackingItem: async (packingWo, boxId, itemCode) => {
+    const response = await apiClient.post(
+      '/packing/master/remove_box_item',
+      {
+        PackingWO: Number(packingWo),
+        BoxId: String(boxId).trim(),
+        ItemCode: String(itemCode).trim(),
+      }
+    );
+    return response.data;
+  },
+
+  deleteOpenPackingBox: async (packingWo, boxId) => {
+    const response = await apiClient.post(
+      '/packing/master/delete_open_box',
+      {
+        PackingWO: Number(packingWo),
+        BoxId: String(boxId).trim(),
+      }
+    );
+    return response.data;
+  },
+
+  getOpenPackingBox: async (wo) => {
+    const response = await apiClient.get(
+      `/packing/master/get_open_box/${wo}`
+    );
+    return response.data;
+  },
+
+  // Giữ dữ liệu thùng đã hoàn tất từ Batches_Master/Box_Master,
+  // đồng thời chèn thùng đang làm dở lấy từ Box_Status.
+  getLoggedBoxes: async (wo) => {
+    const [finishedResponse, openResponse] = await Promise.all([
+      apiClient.get(`/packing/getLoggedBoxes/${wo}`),
+      apiClient.get(`/packing/master/get_open_box/${wo}`),
+    ]);
+
+    const finishedResult = finishedResponse.data;
+    const openResult = openResponse.data;
+    const finishedBoxes = finishedResult?.data || [];
+    const openBox = openResult?.data || null;
+
+    return {
+      success: Boolean(
+        finishedResult?.success
+        || openResult?.success
+      ),
+      message: (
+        finishedResult?.message
+        || openResult?.message
+      ),
+      data: openBox
+        ? [
+            openBox,
+            ...finishedBoxes.filter(
+              box => box.id !== openBox.id
+            ),
+          ]
+        : finishedBoxes,
+    };
+  },
+
+    updateWOProgress: async (data) => {
+        try {
+            const response = await apiClient.post('/validation/updateWOprogress', data);
+            return response.data;
+        } catch (error) {
+            throw error;
+        }
+    },
+  
+    // IPTH_ALLOCATOR_ROUTING_V4: Read-only FERT options, separate from route generation.
+    getAllocatorTargetCandidates: async (jobNo) => {
+        const response = await apiClient.get(`/bom/routing/candidates/${encodeURIComponent(String(jobNo).trim())}`);
+        return response.data;
+    },
+    // V4.1: Outsource uses New Part Number as the current PN, then selects
+    // an FERT target exactly like Inhouse allocation. No SAP JOB lookup.
+    getAllocatorTargetCandidatesByPn: async (currentPn) => {
+        const pn = String(currentPn || '').trim().toUpperCase();
+        if (!pn) throw new Error('Thiếu New Part Number (Sau Outsource).');
+        const response = await apiClient.get(`/bom/routing/candidates/by-pn/${encodeURIComponent(pn)}`);
+        return response.data;
+    },
+    resolveAllocatorRoutingByPn: async (currentPn, targetPn) => {
+        const start = String(currentPn || '').trim().toUpperCase();
+        const target = String(targetPn || '').trim().toUpperCase();
+        if (!start || !target) throw new Error('Thiếu Current PN hoặc Target PN.');
+        const response = await apiClient.post('/bom/routing/resolve-by-pn', {
+            start_pn: start, target_pn: target,
+        });
+        return response.data;
+    },
+    resolveOutsourceTransition: async (currentPn, nextPn) => {
+        const response = await apiClient.post('/bom/routing/transition', {
+            current_pn: String(currentPn).trim().toUpperCase(),
+            next_pn: String(nextPn).trim().toUpperCase(),
+        });
+        return response.data;
+    },
+    // IPTH_ALLOCATOR_NEXT_PROCESS_V2: Auto/Manual destination, read-only routing preview.
+    resolveAllocatorRouting: async (jobNo, mode = 'auto', targetPn = '') => {
+        if (mode !== 'auto' && mode !== 'manual') {
+            throw new Error('Chế độ routing không hợp lệ.');
+        }
+        const pn = String(targetPn || '').trim().toUpperCase();
+        if (mode === 'manual' && !pn) {
+            throw new Error('Manual Mode yêu cầu Target PN.');
+        }
+        const payload = {
+            job_no: String(jobNo).trim(),
+            mode,
+            issue_trucking_no: false,
+            force_regenerate: true,
+            ...(mode === 'manual' ? { target_pn: pn } : {}),
+        };
+        const response = await apiClient.post('/bom/routing/resolve', payload);
+        return response.data;
+    },
+    getAllocationStatus: async (wo) => {
+        return (await apiClient.get(`/allocation/status/${wo}`)).data;
+    },
+    generateBatches: async (payload) => {
+        return (await apiClient.post('/allocation/generate', payload)).data;
+    },
+    verifyAllocationCard: async (payload) => {
+        return (await apiClient.post('/allocation/verify_card', payload)).data;
+    },
+    verifyBulkCards: async (payload) => {
+        return (await apiClient.post('/allocation/verify_bulk', payload)).data;
+    },
+    printBatches: async (payload) => {
+        return (await apiClient.post('/allocation/print_batches', payload)).data;
+    },
+    initOutsourceAllocation: async (payload) => {
+    const response = await apiClient.post('/allocation/outsource/init', payload);
+    return response.data;
+    },
+    deleteAllocation: async (payload) => {
+    const response = await apiClient.delete('/allocation/deleteAllocation', {data: payload});
+    return response.data;
+    },
+    getWorkCenters: async () => {
+      try {
+          const response = await apiClient.get('/validation/getWorkCenters'); // Đổi đường dẫn theo router của bạn
+          return response.data;
+      } catch (error) {
+          throw error;
+      }
+    },
+    // =================================================================
+    // CÁC API MỚI CHO QUY TRÌNH HỢP NHẤT (MASTER - DETAIL POOL MODEL)
+    // =================================================================
+
+    // Lấy toàn bộ trạng thái của bể chứa (Linkage, Inputs, Boxes)
+    getPackingMasterStatus: async (packingWo) => {
+      const response = await apiClient.get(`/packing/master/status/${packingWo}`);
+      return response.data;
+    },
+
+
+    // API legacy: chỉ đọc PN từ SAP.
+    checkAliasWoInfo: async (aliasWo) => {
+      const response = await apiClient.get(
+        `/packing/master/check_alias/${aliasWo}`
+      );
+      return response.data;
+    },
+
+    // API legacy được giữ để tương thích. Backend vẫn revalidate đầy đủ
+    // và không còn nhận PartNumber từ frontend.
+    checkMasterAliasLink: async (payload) => {
+      const response = await apiClient.post(
+        '/packing/master/check_link_alias',
+        {
+          PackingWO: Number(payload.PackingWO),
+          AliasWO: Number(payload.AliasWO),
+          CreatedBy: payload.CreatedBy || null,
+        }
+      );
+      return response.data;
+    },
+
+    linkMasterAlias: async (payload) => {
+      const response = await apiClient.post(
+        '/packing/master/link_alias',
+        {
+          PackingWO: Number(payload.PackingWO),
+          AliasWO: Number(payload.AliasWO),
+          CreatedBy: payload.CreatedBy || null,
+        }
+      );
+      return response.data;
+    },
+
+    // Ghi nhận vật tư (Main Input / Raw) vào bể chứa chung của Packing
+    logMasterMaterial: async (payload) => {
+      // payload: { PackingWO: "...", Code: "...", QTY: 1, Type: "MAIN_INPUT", PartNumber: "..." }
+      const response = await apiClient.post('/packing/master/log_material', payload);
+      return response.data;
+    },
+
+    // Chốt thùng (Đã bao gồm Validate sản lượng chặt chẽ ở Backend)
+    logMasterBox: async (payload) => {
+      // payload: { PackingWO: "...", BoxId: "...", Items: [], IsSkipped: false, SkipReason: "" }
+      const response = await apiClient.post('/packing/master/log_box', payload);
+      return response.data;
+    },
+
+    // Chốt Packing Master và deactivate linkage.
+    // Backend không tự động đóng trạng thái của Assy WO.
+    markMasterDone: async (packingWo) => {
+      const response = await apiClient.post('/packing/master/mark_done', { PackingWO: packingWo });
+      return response.data;
+    },
+
+    // Lấy danh sách các Lệnh con (Sub-Assy) đã được liên kết
+  // Lấy danh sách các Lệnh phụ (Sub-Assy Alias) đã được lưu trong Database
+      getLinkedAliases: async (packingWo) => {
+          try {
+              const response = await apiClient.get(`/validation/getLinkedAliases/${packingWo}`);
+              return response.data;
+          } catch (error) {
+              throw error;
+          }
+      },
+};

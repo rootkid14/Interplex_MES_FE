@@ -33,6 +33,17 @@ const FrameAssyPackingMaster = () => {
     const boxRule = actualRules.boxRule || {};
     const MAX_QTY_PER_BOX = parseInt(boxRule.boxQTY) || 10;
     const fallbackPN = outputMainRule?.partNumber || (actualRules.mainInputs && actualRules.mainInputs[0]?.partNumber) || "UNKNOWN";
+    const isQuantityPacking = Boolean(
+        outputMainRule?.partNumber &&
+        !String(outputMainRule.fixedString || '').trim() &&
+        String(outputMainRule.partNumber).trim() !== String(woData?.ModelNO || '').trim() &&
+        compactRules[String(outputMainRule.partNumber).trim()]?.scanType === 'OUTPUT_MAIN' &&
+        !String(compactRules[String(outputMainRule.partNumber).trim()]?.fixedString || '').trim() &&
+        Object.entries(compactRules).filter(([pn, rule]) =>
+            rule?.scanType === 'OUTPUT_MAIN' &&
+            String(pn).trim() !== String(woData?.ModelNO || '').trim()
+        ).length === 1
+    );
 
     // ========================================================
     // 1. STATE QUẢN LÝ DỮ LIỆU
@@ -60,6 +71,14 @@ const FrameAssyPackingMaster = () => {
     });
 
     const activeBox = masterData.boxes.find(b => !b.isFinished);
+    // Reopen the QTY modal once for an unfinished box recovered after refresh.
+    useEffect(() => {
+        if (isLoading || !isQuantityPacking || !activeBox) return;
+        if (promptedQuantityBox.current === activeBox.id) return;
+        promptedQuantityBox.current = activeBox.id;
+        setQuantityModal({ isOpen: true, boxId: activeBox.id,
+            qty: String(MAX_QTY_PER_BOX), error: '', submitting: false });
+    }, [isLoading, isQuantityPacking, activeBox?.id, MAX_QTY_PER_BOX]);
 
     // Scanners & Modals
     const [showMatScanner, setShowMatScanner] = useState(false);
@@ -83,6 +102,8 @@ const FrameAssyPackingMaster = () => {
     const [doneModal, setDoneModal] = useState({ isOpen: false, scannedWo: '', error: '' });
     const [isNgModalOpen, setIsNgModalOpen] = useState(false);
     const [skipModal, setSkipModal] = useState({ isOpen: false, boxId: '', reason: '' });
+    const [quantityModal, setQuantityModal] = useState({ isOpen: false, boxId: '', qty: '', error: '', submitting: false });
+    const promptedQuantityBox = useRef(null);
 
     // ========================================================
     // 2. LỌC ALIAS & TÍNH TOÁN ĐỊNH MỨC POKA-YOKE
@@ -429,6 +450,7 @@ const FrameAssyPackingMaster = () => {
             }
         }
 
+        if (quantityModal.submitting) return;
         if (masterData.boxes.some(b => b.id === cleanedCode)) return setErrorMsg("Mã Bao bì này đã được sử dụng!");
         if (activeBox) return setErrorMsg("Vui lòng hoàn tất Thùng hiện tại trước khi tạo mới!");
         if (maxAllowedQty === 0 && nonPcsRawRules.length > 0 && requiredMainPNs.length === 0) return setErrorMsg('Không thể quy đổi RAW KG/M sang PCS để tính giới hạn Packing. Cần Main Input PCS hoặc quy tắc chuyển đổi được duyệt.');
@@ -458,8 +480,54 @@ const FrameAssyPackingMaster = () => {
                 boxes: [newBox, ...prev.boxes]
             }));
             setBoxInput('');
+            if (isQuantityPacking) {
+                promptedQuantityBox.current = cleanedCode;
+                setQuantityModal({ isOpen: true, boxId: cleanedCode,
+                    qty: String(MAX_QTY_PER_BOX), error: '', submitting: false });
+            }
         } catch (error) {
             setErrorMsg(error?.response?.data?.message || "Lỗi khi tạo thùng mới.");
+        }
+    };
+
+    const handleConfirmQuantity = async () => {
+        if (quantityModal.submitting) return;
+        const qty = Number(quantityModal.qty);
+        if (!Number.isInteger(qty) || qty < 1 || qty > MAX_QTY_PER_BOX) {
+            return setQuantityModal(prev => ({ ...prev,
+                error: `Số lượng phải là số nguyên từ 1 đến ${MAX_QTY_PER_BOX}.` }));
+        }
+        if (!isChecklistComplete) {
+            return setQuantityModal(prev => ({ ...prev,
+                error: 'Chưa liên kết Assy WO bắt buộc.' }));
+        }
+        if (currentTotalPacked + qty > maxAllowedQty) {
+            return setQuantityModal(prev => ({ ...prev,
+                error: `Sản lượng vượt giới hạn vật tư: ${maxAllowedQty}.` }));
+        }
+        setQuantityModal(prev => ({ ...prev, submitting: true, error: '' }));
+        try {
+            const result = await workstationAPI.confirmPackingBoxQuantity(
+                woData.WO, quantityModal.boxId, qty
+            );
+            if (!result?.success) {
+                return setQuantityModal(prev => ({ ...prev, submitting: false,
+                    error: result?.message || 'Không thể xác nhận số lượng.' }));
+            }
+            // Reload authoritative finished Box contents from the server.
+            const latest = await workstationAPI.getLoggedBoxes(woData.WO);
+            if (latest?.success) {
+                setMasterData(prev => ({ ...prev, boxes: latest.data || [] }));
+            } else {
+                setMasterData(prev => ({ ...prev, boxes: prev.boxes.map(box =>
+                    box.id === quantityModal.boxId ? { ...box, isFinished: true,
+                        items: Array.from({ length: qty }, () => ({ code: outputMainRule.partNumber, time: '' })) } : box
+                ) }));
+            }
+            setQuantityModal({ isOpen: false, boxId: '', qty: '', error: '', submitting: false });
+        } catch (error) {
+            setQuantityModal(prev => ({ ...prev, submitting: false,
+                error: error?.response?.data?.message || 'Lỗi kết nối. Có thể thùng đã chốt; hãy thử xác nhận lại cùng Qty.' }));
         }
     };
 
@@ -467,6 +535,7 @@ const FrameAssyPackingMaster = () => {
         const cleanedCode = code.trim();
         if(!cleanedCode || !activeBox) return;
         setErrorMsg('');
+        if (isQuantityPacking) return setErrorMsg('Quantity Mode: hãy dùng nút XÁC NHẬN QTY, không scan tem sản phẩm.');
         
         if (outputMainRule?.fixedString && !cleanedCode.toUpperCase().includes(outputMainRule.fixedString.toUpperCase())){
             return setErrorMsg(`Mã Thành phẩm sai định dạng!`);
@@ -843,7 +912,13 @@ const FrameAssyPackingMaster = () => {
                                     </div>
                                 ) : (
                                     <div className="bg-slate-800/80 border-b border-slate-700 shadow-xl p-6 rounded-xl animate-fade-in-up">
-                                        <div className="flex flex-col sm:flex-row items-center gap-3 w-full">
+                                        {isQuantityPacking ? (
+                                            <div className="w-full flex flex-col sm:flex-row gap-4 items-center justify-between">
+                                                <span className="text-amber-300 font-bold">Quantity Mode — Subassy {outputMainRule.partNumber} — tối đa {MAX_QTY_PER_BOX} sản phẩm/thùng</span>
+                                                <button onClick={() => setQuantityModal({ isOpen: true, boxId: activeBox.id, qty: String(MAX_QTY_PER_BOX), error: '', submitting: false })}
+                                                    className="bg-emerald-600 hover:bg-emerald-500 px-5 py-3 rounded-lg font-black text-white">NHẬP / XÁC NHẬN QTY</button>
+                                            </div>
+                                        ) : <div className="flex flex-col sm:flex-row items-center gap-3 w-full">
                                             <input ref={itemInputRef} type="text" value={itemInput} onChange={(e) => setItemInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleScanItem(itemInput)} disabled={activeBox.items.length >= activeBox.maxQty} placeholder={activeBox.items.length >= activeBox.maxQty ? "Hệ thống đang chốt..." : "Quét tem Thành Phẩm..."} className={`flex-1 w-full bg-slate-900 border border-slate-600 text-white px-4 py-4 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-mono text-lg disabled:opacity-50`} />
                                             <div className="flex gap-2 w-full sm:w-auto">
                                                 {itemInput.trim().length === 0 ? (
@@ -853,7 +928,7 @@ const FrameAssyPackingMaster = () => {
                                                 )}
                                                 <ActionButton onClick={() => setSkipModal({...skipModal, isOpen: true, boxId: activeBox.id})} label="XUẤT NGOẠI LỆ" color="slate" icon={<PackagePlus size={20}/>} className="py-4 px-6 flex-1 sm:flex-none" title="Chốt hộp dù chưa đủ định mức" />
                                             </div>
-                                        </div>
+                                        </div>}
                                     </div>
                                 )}
 
@@ -910,6 +985,32 @@ const FrameAssyPackingMaster = () => {
             {/* MODALS */}
             {/* ======================================================== */}
             
+            {/* Quantity Confirmation — no item barcode, no new DB schema */}
+            {quantityModal.isOpen && (
+                <div className="absolute inset-0 z-[90] bg-slate-950/90 backdrop-blur-sm flex items-center justify-center p-4">
+                    <div className="bg-slate-800 w-full max-w-md rounded-2xl border border-emerald-500/50 shadow-2xl p-6">
+                        <h2 className="text-xl font-black text-emerald-300 mb-2">Xác nhận số lượng trong thùng</h2>
+                        <p className="text-slate-300 mb-3">Box: <b>{quantityModal.boxId}</b></p>
+                        <p className="text-slate-400 text-sm mb-5">Subassy PN: <b>{outputMainRule.partNumber}</b> · Định mức {MAX_QTY_PER_BOX} pcs</p>
+                        <label className="block text-slate-200 font-bold mb-2">Số lượng thực tế (1–{MAX_QTY_PER_BOX})</label>
+                        <input type="number" autoFocus min="1" max={MAX_QTY_PER_BOX} step="1"
+                            value={quantityModal.qty}
+                            onChange={e => setQuantityModal(prev => ({ ...prev, qty: e.target.value, error: '' }))}
+                            onKeyDown={e => e.key === 'Enter' && !quantityModal.submitting && handleConfirmQuantity()}
+                            disabled={quantityModal.submitting}
+                            className="w-full bg-slate-900 border border-slate-500 rounded-xl px-4 py-3 text-2xl font-black text-white" />
+                        <p className="text-xs text-amber-300 mt-3">Xác nhận sẽ ghi số lượng PN ảo tương ứng và chốt thùng. Không có Serial Number từng sản phẩm.</p>
+                        {quantityModal.error && <p className="text-red-400 mt-3 font-bold">{quantityModal.error}</p>}
+                        <div className="flex gap-3 mt-6">
+                            <button disabled={quantityModal.submitting} onClick={() => setQuantityModal(prev => ({ ...prev, isOpen: false, error: '' }))}
+                                className="flex-1 bg-slate-600 disabled:opacity-50 text-white font-bold py-3 rounded-xl">ĐỂ SAU</button>
+                            <button disabled={quantityModal.submitting} onClick={handleConfirmQuantity}
+                                className="flex-1 bg-emerald-600 disabled:opacity-50 text-white font-black py-3 rounded-xl">{quantityModal.submitting ? 'ĐANG GHI...' : 'XÁC NHẬN'}</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* 1. Modal Nhập QTY */}
             {remainderModal.isOpen && (
                 <div className="absolute inset-0 z-[70] bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4">

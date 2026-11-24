@@ -28,6 +28,11 @@ const FramePackingProc = () => {
     if (boxRule?.partNumber) availablePNs.push(boxRule.partNumber);
     
     const MAX_QTY_PER_BOX = parseInt(boxRule?.boxQTY) || 10;
+    const requiresCanonicalQtyPacking = Boolean(
+        outputMain?.partNumber && !String(outputMain.fixedString || '').trim() &&
+        String(outputMain.partNumber).trim() !== String(woData?.ModelNO || '').trim() &&
+        woData?.routingData?.compactRules?.[String(outputMain.partNumber).trim()]?.scanType === 'OUTPUT_MAIN'
+    );
 
     const [boxInput, setBoxInput] = useState('');
     const [itemInput, setItemInput] = useState('');
@@ -217,12 +222,23 @@ const FramePackingProc = () => {
     }, [isNgModalOpen, skipModal.isOpen, doneModal.isOpen, showBoxScanner, showItemScanner, showDoneScanner, boxes, activeBox]);
 
     const handleScanBox = async (code) => {
-
+        if (requiresCanonicalQtyPacking) {
+            setBoxError('Subassy Quantity Mode phải dùng trạm Assy/Packing Master (có liên kết Assy WO).');
+            return;
+        }
         const cleanedCode = code.trim();
         if(!cleanedCode) return;
         setBoxError('');
         
-        if (boxRule?.fixedString && !cleanedCode.toUpperCase().includes(boxRule.fixedString.toUpperCase())) {
+        // Match the canonical Packing runtime: wildcard ignores fixedString.
+        if (boxRule?.isWildcard) {
+            const requiredLength = parseInt(boxRule.wildcardLength, 10);
+            if (requiredLength > 0 && cleanedCode.length !== requiredLength) {
+                setBoxError(`Mã thùng phải có ${requiredLength} ký tự.`);
+                setBoxInput('');
+                return;
+            }
+        } else if (boxRule?.fixedString && !cleanedCode.toUpperCase().includes(boxRule.fixedString.toUpperCase())) {
             setBoxError(`Mã thùng không hợp lệ! Chuỗi không chứa '${boxRule.fixedString}'.`);
             setBoxInput('');
             return;

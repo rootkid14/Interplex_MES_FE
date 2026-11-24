@@ -50,6 +50,31 @@ const hydrateRawUoms = (nodes, configRules) => {
   return { updated, changes };
 };
 
+// Restore every persisted EXTEND branch before Generate Rules is allowed.
+// The BOM endpoint is lazy: a parent can load while its expanded grandchildren are still absent.
+const restoreSavedExtendedBOM = async (nodes, savedRules, loadBOM, parentPath = new Set(), depth = 0) => {
+  if (depth > 48) throw new Error('BOM depth limit exceeded while restoring saved EXTEND rules.');
+  for (const node of (nodes || [])) {
+    const pn = String(node.Component || '').trim();
+    const lineage = new Set(parentPath);
+    if (node.MaterialType === 'HALB' && savedRules?.[pn]?.mode === 'EXTEND') {
+      if (lineage.has(pn)) throw new Error(`Circular BOM reference while expanding ${pn}.`);
+      lineage.add(pn);
+      // Always refetch an explicitly EXTENDed HALB: initial lazy BOM may include
+      // only a partial child list, even when node.children is not empty.
+      const result = await loadBOM(pn);
+      const children = result?.data?.[0]?.children;
+      if (!Array.isArray(children)) throw new Error(`Cannot restore expanded BOM branch ${pn}. No children were returned.`);
+      if (children.length > 0 || !Array.isArray(node.children) || node.children.length === 0) {
+        node.children = children;
+      }
+    }
+    if (Array.isArray(node.children) && node.children.length) {
+      await restoreSavedExtendedBOM(node.children, savedRules, loadBOM, lineage, depth + 1);
+    }
+  }
+};
+
 const useModelConfigStore = create((set, get) => ({
   // =====================================
   // 1. DATA CONTAINERS
@@ -60,6 +85,7 @@ const useModelConfigStore = create((set, get) => ({
   scanRulesConfig: {},
   isLoading: false,
   isLazyLoading: {}, 
+  loadError: '',
 
   ecnContext: null,
   setEcnContext: (ecnData, targetModel) => set({ ecnContext: { ecnData, targetModel } }),
@@ -82,12 +108,19 @@ const useModelConfigStore = create((set, get) => ({
     { id: Date.now(), action: 'SKIP', conditions: [{ id: Date.now(), tools_target: 'PREFIX', tools_type: 'EQUAL', value: '' }] }
   ],
 
-  setConfigType: (type) => set({ configType: type, MasterRouting: [], BomJSON: [], configRules: {} }),
+  setConfigType: (type) => set({ configType: type, MasterRouting: [], BomJSON: [], configRules: {}, scanRulesConfig: {}, savedCompactRules: null, loadError: '' }),
   setOutSourcePN: (pn) => set({ outSourcePN: pn }),
   toggleHideIgnored: () => set(s => ({ hideIgnored: !s.hideIgnored })),
   acknowledgeGlobalEcn: () => set({ globalEcnAlert: { hasAlert: false, message: "" } }),
   setSandboxRules: (rules) => set({ sandboxRules: rules }),
-  toggleWildcard: (partNo) => set(s => ({ configRules: { ...s.configRules, [partNo]: { ...s.configRules[partNo], isWildcard: !s.configRules[partNo].isWildcard } } })),
+  toggleWildcard: (partNo) => set(s => {
+    const previous = s.configRules[partNo] || {};
+    const enabled = !previous.isWildcard;
+    // Wildcard and fixed-string restrictions are mutually exclusive.
+    return { configRules: { ...s.configRules, [partNo]: {
+      ...previous, isWildcard: enabled, fixedString: enabled ? '' : (previous.fixedString || '')
+    } } };
+  }),
   updateWildcardLength: (partNo, len) => set(s => ({ configRules: { ...s.configRules, [partNo]: { ...s.configRules[partNo], wildcardLength: len } } })),
 
 
@@ -95,7 +128,7 @@ const useModelConfigStore = create((set, get) => ({
   // 2. MANAGER: FETCH TỪ DB HOẶC ERP
   // =====================================
   fetchConfigOrBom: async (partNo) => {
-    set({ isLoading: true });
+    set({ isLoading: true, MasterRouting: [], BomJSON: [], configRules: {}, scanRulesConfig: {}, savedCompactRules: null, isLazyLoading: {}, loadError: '' });
     try {
       let dbRes = null;
       try {
@@ -113,7 +146,10 @@ const useModelConfigStore = create((set, get) => ({
       if (dbRes) {
         const rData = dbRes.routingData;
         const savedRules = rData.compactRules || {}; 
-        const initialRules = { ...savedRules }; 
+        const initialRules = { ...savedRules };
+        // Await the entire saved hierarchy (including nested HALB EXTEND branches).
+        // Do not leave Generation enabled while children are still missing.
+        await restoreSavedExtendedBOM(rawBom, savedRules, (pn) => bomAPI.getLazyBOM(pn));
 
         const applySavedRules = (nodes) => {
           nodes.forEach(node => {
@@ -138,20 +174,15 @@ const useModelConfigStore = create((set, get) => ({
         set({
           configType: rData.configType || 'PACKING',
           outSourcePN: rData.outSourcePN || dbRes.jsonData?.outSourcePN || '', 
-          MasterRouting: rawBom, 
+          MasterRouting: rawBom,
+          BomJSON: rawBom,
+          loadError: '',
           configRules: hydrated.updated,
           rawUomChanges: hydrated.changes,
           scanRulesConfig: dbRes.jsonData || {},
           savedCompactRules: savedRules,
           isLoading: false,
           globalEcnAlert: { hasAlert: true, message: `Lưu ý: Đã phục hồi cấu hình cũ từ Database.` }
-        });
-
-        // Tự động bung đệ quy những HALB đang được EXTEND
-        rawBom[0]?.children?.forEach(child => {
-          if (child.MaterialType === 'HALB' && initialRules[child.Component]?.mode === 'EXTEND') {
-            get().lazyLoadHalb(child.Component, child);
-          }
         });
 
       } else {
@@ -193,7 +224,7 @@ const useModelConfigStore = create((set, get) => ({
       }
     } catch (e) {
       console.error("Error loading data:", e);
-      set({ isLoading: false });
+      set({ isLoading: false, loadError: e?.message || 'Không thể khôi phục cây BOM.' });
     }
   },
 
@@ -206,27 +237,21 @@ const useModelConfigStore = create((set, get) => ({
       const res = await bomAPI.getLazyBOM(halbPartNo);
       const fetchedNode = res.data[0];
       
-      if (fetchedNode && fetchedNode.children) {
+      if (fetchedNode && Array.isArray(fetchedNode.children)) {
         const { configRules, MasterRouting, savedCompactRules } = get();
         const newRules = { ...configRules };
-        
-        fetchedNode.children.forEach(child => {
-          if (!newRules[child.Component]) {
-             if (savedCompactRules && savedCompactRules[child.Component]) {
-                 // NẾU TRONG CẨM NANG ĐÃ LƯU CÓ MÃ NÀY -> LẤY ĐỒ CŨ (Giữ nguyên user input)
-                 newRules[child.Component] = savedCompactRules[child.Component];
-             } else {
-                 // MÃ MỚI TINH HOẶC CHƯA LƯU -> AUTO-FILL FIXED STRING
-                 newRules[child.Component] = { 
-                     role: 'STANDARD', 
-                     scanType: child.MaterialType === 'ROH' ? 'RAW_QTY' : 'MAIN_INPUT', 
-                     fixedString: child.Component, // <--- AUTO FILL
-                     boxQTY: '0', 
-                     mode: null 
-                 };
-             }
+        // Recursively restore any nested saved EXTEND branches before publishing this subtree.
+        await restoreSavedExtendedBOM(fetchedNode.children, configRules, (pn) => bomAPI.getLazyBOM(pn));
+        const addRuleForEveryDescendant = (nodes) => (nodes || []).forEach(child => {
+          const pn = String(child.Component || '').trim();
+          if (!newRules[pn]) {
+            newRules[pn] = savedCompactRules
+              ? (savedCompactRules[pn] || { role: 'STANDARD', scanType: 'IGNORE', fixedString: '', boxQTY: '0', mode: null })
+              : { role: 'STANDARD', scanType: child.MaterialType === 'ROH' ? 'RAW_QTY' : 'MAIN_INPUT', fixedString: pn, boxQTY: '0', mode: null };
           }
+          addRuleForEveryDescendant(child.children);
         });
+        addRuleForEveryDescendant(fetchedNode.children);
 
         const insertChildren = (nodes) => {
           for (let i = 0; i < nodes.length; i++) {
@@ -247,61 +272,7 @@ const useModelConfigStore = create((set, get) => ({
       }
     } catch (e) {
       console.error("Lỗi lazy load", e);
-    } finally {
-      set(s => ({ isLazyLoading: { ...s.isLazyLoading, [halbPartNo]: false } }));
-    }
-  },
-
-  // =====================================
-  // 3. LAZY LOAD HALB (VÁ LỖI MẤT CONFIG)
-  // =====================================
-  lazyLoadHalb: async (halbPartNo, nodeRef) => {
-    set(s => ({ isLazyLoading: { ...s.isLazyLoading, [halbPartNo]: true } }));
-    try {
-      const res = await bomAPI.getLazyBOM(halbPartNo);
-      const fetchedNode = res.data[0];
-      
-      if (fetchedNode && fetchedNode.children) {
-        const { configRules, MasterRouting, savedCompactRules } = get();
-        const newRules = { ...configRules };
-        
-        // VÁ LỖI QUAN TRỌNG TẠI ĐÂY
-        fetchedNode.children.forEach(child => {
-          if (!newRules[child.Component]) {
-             if (savedCompactRules) {
-                 // NẾU ĐANG PHỤC HỒI TỪ DB: Lấy từ cẩm nang ra (để giữ nguyên Raw/MainInput và fixedString)
-                 // Nếu trong cẩm nang không có -> nó đã bị user IGNORE lúc save -> trả về IGNORE
-                 newRules[child.Component] = savedCompactRules[child.Component] || { 
-                     role: 'STANDARD', scanType: 'IGNORE', fixedString: '', boxQTY: '0', mode: null 
-                 };
-             } else {
-                 // NẾU LÀ TẠO MỚI HOÀN TOÀN: Sinh luật Default
-                 newRules[child.Component] = { 
-                     role: 'STANDARD', scanType: child.MaterialType === 'ROH' ? 'RAW_QTY' : 'MAIN_INPUT', fixedString: child.Component, boxQTY: '0', mode: null 
-                 };
-             }
-          }
-        });
-
-        const insertChildren = (nodes) => {
-          for (let i = 0; i < nodes.length; i++) {
-            if (nodes[i].Component === halbPartNo) {
-              nodes[i].children = fetchedNode.children;
-              return true;
-            }
-            if (nodes[i].children && insertChildren(nodes[i].children)) return true;
-          }
-          return false;
-        };
-
-        const newRouting = [...MasterRouting];
-        insertChildren(newRouting);
-        const hydrated = hydrateRawUoms(newRouting, newRules);
-        set({ MasterRouting: newRouting, configRules: hydrated.updated,
-          rawUomChanges: [...get().rawUomChanges, ...hydrated.changes] });
-      }
-    } catch (e) {
-      console.error("Lỗi lazy load", e);
+      set({ loadError: e?.message || `Không thể tải BOM cho ${halbPartNo}.` });
     } finally {
       set(s => ({ isLazyLoading: { ...s.isLazyLoading, [halbPartNo]: false } }));
     }
@@ -426,7 +397,9 @@ const useModelConfigStore = create((set, get) => ({
   },
 
   parseMasterRoutingToRules: () => {
-    const { MasterRouting, configRules, configType, outSourcePN } = get();
+    const { MasterRouting, configRules, configType, outSourcePN, isLoading, isLazyLoading, loadError } = get();
+    if (isLoading || Object.values(isLazyLoading).some(Boolean)) throw new Error('BOM is still loading. Wait for all extended branches.');
+    if (loadError) throw new Error(`BOM load incomplete: ${loadError}`);
     const issues = rawUomIssues(MasterRouting, configRules);
     if (issues.length) throw new Error(`RAW UOM validation failed:\n${issues.join('\n')}`);
     const rules = { mainInputs: [], rawMaterials: [] };
@@ -445,7 +418,8 @@ const useModelConfigStore = create((set, get) => ({
         const config = configRules[node.Component];
         if (!config) return;
 
-        const ruleObj = { partNumber: node.Component, fixedString: config.fixedString };
+        const ruleObj = { partNumber: node.Component,
+          fixedString: config.scanType === 'BOX_RULE' && config.isWildcard ? '' : (config.fixedString || '') };
 
         if (config.scanType === 'MAIN_INPUT') rules.mainInputs.push(ruleObj);
         else if (config.scanType === 'RAW_QTY' && !registeredRaw.has(node.Component)) {
@@ -473,7 +447,8 @@ const useModelConfigStore = create((set, get) => ({
   },
 
   saveConfig: async (partNo) => {
-    const { scanRulesConfig, configType, outSourcePN, configRules, MasterRouting } = get();
+    const { scanRulesConfig, configType, outSourcePN, configRules, MasterRouting, isLoading, isLazyLoading, loadError } = get();
+    if (isLoading || Object.values(isLazyLoading).some(Boolean) || loadError) throw new Error('BOM is not fully loaded. Please resolve loading errors before Save.');
     const issues = rawUomIssues(MasterRouting, configRules);
     if (issues.length) throw new Error(`RAW UOM validation failed:\n${issues.join('\n')}`);
     // ... (Code map IDBOM giữ nguyên) ...
@@ -490,7 +465,11 @@ const useModelConfigStore = create((set, get) => ({
     Object.keys(configRules).forEach(key => {
       const rule = configRules[key];
       if (rule.scanType !== 'IGNORE' || rule.mode === 'EXTEND') {
-        compactRules[key] = { ...rule, IDBOM: idBomMap[key] || null };
+        compactRules[key] = {
+          ...rule,
+          fixedString: rule.scanType === 'BOX_RULE' && rule.isWildcard ? '' : (rule.fixedString || ''),
+          IDBOM: idBomMap[key] ?? rule.IDBOM ?? null
+        };
       }
     });
     
