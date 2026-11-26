@@ -10,6 +10,9 @@ import DefectReportModal from "../common/DefectReportModals";
 import { useTranslation } from 'react-i18next';
 import WctrSelectionModal from "../common/WctrSelectionModal";
 
+// IPTH_RAW_PN_CASE_V1: Part Number identity only (do not mutate scanned barcode/serial).
+const normalizeMesPn = value => String(value ?? '').trim().toUpperCase();
+
 const FrameAssyPackingMaster = () => {
     const { t } = useTranslation();
     const inputRef = useRef(null);
@@ -143,16 +146,17 @@ const FrameAssyPackingMaster = () => {
     if (requiredRawPNs.length > 0) {
         hasRequiredItems = true;
         const groupedRaw = masterData.rawMaterials.reduce((acc, item) => {
-            acc[item.pn] = (acc[item.pn] || 0) + (Number(item.qty) || 0);
+            const rawPnKey = normalizeMesPn(item.pn);
+            acc[rawPnKey] = (acc[rawPnKey] || 0) + (Number(item.qty) || 0);
             return acc;
         }, {});
         const pcsRawPNs = (actualRules.rawMaterials || [])
             .filter(r => String(r?.expected_uom || '').trim().toUpperCase() === 'PCS')
             .map(r => r.partNumber);
         if (pcsRawPNs.length > 0) {
-            maxAllowedQty = Math.min(maxAllowedQty, ...pcsRawPNs.map(pn => groupedRaw[pn] || 0));
+            maxAllowedQty = Math.min(maxAllowedQty, ...pcsRawPNs.map(pn => groupedRaw[normalizeMesPn(pn)] || 0));
         }
-        if (requiredRawPNs.some(pn => !(groupedRaw[pn] > 0))) maxAllowedQty = 0;
+        if (requiredRawPNs.some(pn => !(groupedRaw[normalizeMesPn(pn)] > 0))) maxAllowedQty = 0;
     }
     if (maxAllowedQty === Infinity && nonPcsRawRules.length > 0 && requiredMainPNs.length === 0) {
         maxAllowedQty = 0;  // no valid PCS capacity for raw-only KG/M packing
@@ -709,7 +713,7 @@ const FrameAssyPackingMaster = () => {
     const buildMaterialChecklist = (rules = [], scannedItems = []) =>
         rules.map((rule, index) => {
             const pn = rule.partNumber || `UNDEFINED-${index + 1}`;
-            const matchedItems = scannedItems.filter(item => item.pn === rule.partNumber);
+            const matchedItems = scannedItems.filter(item => normalizeMesPn(item.pn) === normalizeMesPn(rule.partNumber));
             return {
                 key: `${pn}-${index}`,
                 pn,

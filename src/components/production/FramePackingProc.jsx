@@ -10,6 +10,9 @@ import { MESSAGE_TYPE, WO_STATUS } from '../common/Constants';
 import DefectReportModal from "../common/DefectReportModals";
 import WctrSelectionModal from "../common/WctrSelectionModal";
 
+// IPTH_RAW_PN_CASE_V1: Part Number identity only (do not mutate scanned barcode/serial).
+const normalizeMesPn = value => String(value ?? '').trim().toUpperCase();
+
 const FramePackingProc = () => {
     const { t } = useTranslation();
     const itemInputRef = useRef(null);
@@ -161,7 +164,7 @@ const FramePackingProc = () => {
 
         // --- BƯỚC 2: KIỂM TRA XEM ĐÃ ĐỦ LOẠI PN HAY CHƯA ---
         const missingMain = requiredMainPNs.filter(pn => !scannedMainPNs.includes(pn));
-        const missingRaw = requiredRawPNs.filter(pn => !scannedRawPNs.includes(pn));
+        const missingRaw = requiredRawPNs.filter(pn => !scannedRawPNs.some(rawPn => normalizeMesPn(rawPn) === normalizeMesPn(pn)));
 
         if (missingMain.length > 0 || missingRaw.length > 0) {
             const missingAll = [...missingMain, ...missingRaw].join(', ');

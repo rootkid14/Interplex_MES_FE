@@ -1,0 +1,17 @@
+[
+  {
+    "file": "src/components/production/FrameAssyPackingMaster.jsx",
+    "before": "c156fa8354c083d51ea827cd725ec11f48278737728c3d0202927fc7fc3b7791",
+    "after": "a491b8545bc3cc212a0569aa686f6cf69ef6d6e1cd58fdab94406b4dd2219e79"
+  },
+  {
+    "file": "src/components/production/FrameMachiningProc.jsx",
+    "before": "963659b74063cb3f902125848c47e87d41162b3542d97451fe98b843febffb40",
+    "after": "1ca2590b33ffdf54dfae22abe6382d55b1638d8419cccc52e599438f497d4a8b"
+  },
+  {
+    "file": "src/components/production/FramePackingProc.jsx",
+    "before": "5eb98ee673847ef5af4c0f79d6a6310a0781e1e63d296315ccb039a539019f88",
+    "after": "77293d36cbd3d4485b18d11670db7d1251cbd8691f8834dc5275f482c888c634"
+  }
+]

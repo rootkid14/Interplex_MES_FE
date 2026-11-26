@@ -13,6 +13,9 @@ import { defectCodeAPI } from '../../api/defectCodeApi';
 import DefectReportModal from "../common/DefectReportModals";
 import WctrSelectionModal from "../common/WctrSelectionModal";
 
+// IPTH_RAW_PN_CASE_V1: Part Number identity only (do not mutate scanned barcode/serial).
+const normalizeMesPn = value => String(value ?? '').trim().toUpperCase();
+
 const FrameMachiningProc = () => {
     const { t } = useTranslation();
     const inputRef = useRef(null);
@@ -349,7 +352,7 @@ const FrameMachiningProc = () => {
         
         // Đối chiếu tìm ra các PN chưa được scan
         const missingMainPNs = requiredMainPNs.filter(pn => !scannedMainPNs.includes(pn));
-        const missingRawPNs = requiredRawPNs.filter(pn => !scannedRawPNs.includes(pn));
+        const missingRawPNs = requiredRawPNs.filter(pn => !scannedRawPNs.some(rawPn => normalizeMesPn(rawPn) === normalizeMesPn(pn)));
         
         if (missingMainPNs.length > 0 || missingRawPNs.length > 0) {
             const missingAll = [...missingMainPNs, ...missingRawPNs].join(', ');
@@ -436,7 +439,7 @@ const FrameMachiningProc = () => {
     const buildMaterialChecklist = (rules = [], scannedItems = []) =>
         rules.map((rule, index) => {
             const pn = rule.partNumber || `UNDEFINED-${index + 1}`;
-            const matchedItems = scannedItems.filter(item => item.pn === rule.partNumber);
+            const matchedItems = scannedItems.filter(item => normalizeMesPn(item.pn) === normalizeMesPn(rule.partNumber));
             const totalQty = matchedItems.reduce((sum, item) => sum + (Number(item.qty) || 0), 0);
             return {
                 key: `${pn}-${index}`,
